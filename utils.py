@@ -30,14 +30,6 @@ class SelfPlayWrapper(gym.Env):
         self.last_full_obs = full_obs
         return full_obs["drone0"], info
 
-    # def step(self, action):
-    #     # Use the frozen opponent policy for drone1.
-    #     opponent_obs = self.last_full_obs["drone1"]
-    #     opp_action = self.frozen_opponent_policy(opponent_obs)
-    #     actions = {"drone0": action, "drone1": opp_action}
-    #     full_obs, rewards, dones, truncated, info = self.env.step(actions)
-    #     self.last_full_obs = full_obs
-    #     return full_obs["drone0"], rewards["drone0"], dones["__all__"], truncated, info
     def step(self, action):
         actions = {"drone0": action}  # Main agent's action
 
@@ -68,7 +60,7 @@ class SelfPlayWrapper(gym.Env):
 
 def evaluate_policies(env, training_model, num_episodes=1):
     wins = 0
-    for _ in range(num_episodes):
+    for episode in range(num_episodes):
         obs, info = env.reset()
         done = False
         while not done:
@@ -78,21 +70,36 @@ def evaluate_policies(env, training_model, num_episodes=1):
                 done = dones.get("__all__", False)
             else:
                 done = dones
-                
-        # Get training drone's progress
-        progress_tr = info["drone0"]["progress"]
-        
-        # Check against all opponent drones
-        win_current_episode = True
-        for drone_id, drone_info in info.items():
-            if drone_id != "drone0":  # Skip the training drone
-                if progress_tr <= drone_info["progress"]:
-                    win_current_episode = False
-                    break
-        
-        if win_current_episode:
-            wins += 1
-            
+
+        try:
+            # Skip evaluation if the info structure isn't as expected
+            if "drone0" not in info:
+                print(f"Episode {episode}: Missing drone0 in info")
+                continue
+
+            # Get training drone's progress
+            progress_tr = info["drone0"].get("progress", 0)
+
+            # Check against all opponent drones
+            win_current_episode = True
+            for drone_id, drone_info in info.items():
+                if (drone_id != "drone0" and
+                    drone_id != "episode" and  # Skip the episode info
+                    isinstance(drone_info, dict) and
+                    "progress" in drone_info):
+
+                    if progress_tr <= drone_info["progress"]:
+                        win_current_episode = False
+                        break
+
+            if win_current_episode:
+                wins += 1
+
+        except Exception as e:
+            print(f"Episode {episode}: Error processing info - {e}")
+            print(f"Current info structure: {info}")
+            continue
+
     return wins / num_episodes
 
 # ----------------------------------------

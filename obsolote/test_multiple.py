@@ -5,14 +5,13 @@ import pandas as pd
 from collections import deque
 from stable_baselines3 import PPO
 from envs.drone_race_curriculum_v7 import *
-from envs.drone_race_curriculum_multi_v8 import *
+# from drone_race_selfplay import *
 from utils import *
 
-root_dir = "Results_27Feb_2025"
+root_dir = "Results_26Feb_2025"
 n_eval_episodes = 10
 random_init = False
 terminate_on_collision = True
-env_class = DroneRaceCurriculumMultiEnv
 
 def read_parameters(filepath):
     """
@@ -152,7 +151,7 @@ if __name__ == "__main__":
 
     selfplay = True
 
-    verbose = False
+    verbose = True
     save_csv = True
 
     results_summary = {}
@@ -175,10 +174,6 @@ if __name__ == "__main__":
 
         # Convert and map parameters. For booleans do an explicit conversion.
 
-        if "n_agents" in params:
-            n_agents = int(params["n_agents"])
-        else:
-            n_agents = 2
 
         is_buffer_obs = str_to_bool(params.get("is_buffer_obs", "False"))
         buffer_size = int(params.get("buffer_size", 10))
@@ -186,7 +181,6 @@ if __name__ == "__main__":
         # Parse and convert parameters as needed.
         # Note: The file uses "action_coefficient" but your environment expects "action_coeff".
         env_args = {
-            "n_agents": n_agents,
             "n_gates": int(params["n_gates"]),
             "radius": float(params["radius"]),
             "action_coefficient": float(params["action_coefficient"]),
@@ -210,39 +204,30 @@ if __name__ == "__main__":
         if verbose:
             print("Environment parameters:", env_args)
 
+        # Create the environment with the parsed parameters.
+        # env = DroneRaceCurriculumEnv(**env_args)
         # Create the environment.
         try:
-            env = env_class(**env_args)
+            env = DroneRaceCurriculumEnv(**env_args)
         except Exception as e:
             print("  Error creating environment:", e)
             continue
 
         if selfplay:
-            original_action_spaces = env.action_space  # This is still a Dict
+            dummy_opponent_policy = lambda obs: np.zeros_like(env.action_space["drone1"].sample())
+            env = SelfPlayWrapper(env, dummy_opponent_policy)
 
-            # First create dummy policies (these are just placeholders)
-            dummy_opponent_policies = {}
-            for i in range(1, n_agents):
-                agent_id = f"drone{i}"
-                dummy_opponent_policies[agent_id] = lambda obs: np.zeros_like(original_action_spaces[agent_id].sample())
-
-            # Wrap the environment
-            env = SelfPlayWrapper(env, dummy_opponent_policies)
-
-        # Load the model
+        # Load the saved model.
         model_path = os.path.join(folder_path, "best_model", "best_model.zip")
         model = PPO.load(model_path, device="cpu", env=env)
 
         if selfplay:
-            # Create frozen model
             frozen_model = PPO("MlpPolicy", env, device="cpu", verbose=0)
             frozen_model.set_parameters(model.get_parameters())
             frozen_opponent_policy = FrozenOpponentPolicy(frozen_model)
-            
-            # Set the frozen policy for each opponent
-            for agent_id in env.frozen_opponent_policies.keys():
-                env.frozen_opponent_policies[agent_id] = frozen_opponent_policy
+            env.frozen_opponent_policy = frozen_opponent_policy
 
+        # Evaluate the model.
 
         targets_reached_list, avg_speed_list, \
         total_reward_list, collisions_list = evaluate_model(model, env, n_episodes=n_eval_episodes,

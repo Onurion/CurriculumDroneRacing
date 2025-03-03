@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 from stable_baselines3.common.vec_env import DummyVecEnv
-from drone_dynamics import DroneDynamics, LowLevelController, VelocityTracker
+from dynamics.drone_dynamics import DroneDynamics, LowLevelController, VelocityTracker
 
 class DroneVelGateEnv(gym.Env):
     metadata = {'render.modes': ['human']}

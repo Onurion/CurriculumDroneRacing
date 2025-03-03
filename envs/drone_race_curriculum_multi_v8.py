@@ -2,12 +2,11 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 from dynamics.drone_dynamics import DroneDynamics, LowLevelController, VelocityTracker
-from stable_baselines3.common.evaluation import evaluate_policy
 import numpy as np
 from collections import deque
 
 
-class DroneRaceCurriculumEnv(gym.Env):
+class DroneRaceCurriculumMultiEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self,
@@ -38,7 +37,7 @@ class DroneRaceCurriculumEnv(gym.Env):
                  gate_passing_tolerance: float = 0.5,
                  enable_takeover:bool=False,
                  takeover_reward: float =0.0):
-        super(DroneRaceCurriculumEnv, self).__init__()
+        super(DroneRaceCurriculumMultiEnv, self).__init__()
 
         # Simulation parameters.
         self.dt = dt
@@ -68,9 +67,13 @@ class DroneRaceCurriculumEnv(gym.Env):
 
         self.is_buffer_obs = is_buffer_obs
 
+        self.agents = []
+        self.training_agent = "drone0"
+        self.n_agents = n_agents
         # Define two drones (agents) for self-play.
-        self.agents = ["drone0", "drone1"]
-        self.n_agents = len(self.agents)
+        for i in range(self.n_agents):
+            self.agents.append(f"drone{i}")
+
 
         # Create a dictionary to hold each agent's components and info.
         self.vehicles = {}
@@ -104,9 +107,9 @@ class DroneRaceCurriculumEnv(gym.Env):
         self.gates = []
         for idx, theta in enumerate(angles):
             if idx % 2 == 0:
-                z = 4 #np.random.uniform(3.5, 4.5)  # high altitude range
+                z = 4 # np.random.uniform(3.5, 4.5)  # high altitude range
             else:
-                z = 3 #np.random.uniform(1.5, 2.5)  # low altitude range
+                z = 3 # np.random.uniform(1.5, 2.5)  # low altitude range
             center = np.array([radius * np.cos(theta), radius * np.sin(theta), z], dtype=np.float32)
             gate = {"center": center, "yaw": theta}
             self.gates.append(gate)
@@ -126,10 +129,10 @@ class DroneRaceCurriculumEnv(gym.Env):
         # Reward function selector.
         self.reward_function = self.reward_function_1 if reward_type == 1 else self.reward_function_2
         if observation_type == 1:
-            self.obs_dim = 17 + self.num_targets
+            self.obs_dim = 13 + 4 * (self.n_agents - 1) + self.num_targets
             self.observation_function = self._get_obs_1
         else:
-            self.obs_dim = 33 + self.num_targets
+            self.obs_dim = 24 + 9 * (self.n_agents - 1) + self.num_targets
             self.observation_function = self._get_obs_2
 
 
@@ -147,11 +150,11 @@ class DroneRaceCurriculumEnv(gym.Env):
         else:
             self.full_obs_dim = self.obs_dim  # no buffering, full_obs_dim equals
 
+        obs_dict = {}
+        for agent in self.agents:
+            obs_dict[agent] = gym.spaces.Box(low=-1.0, high=1.0, shape=(self.full_obs_dim,), dtype=np.float32)
         # Define observation and action spaces per agent.
-        self.observation_space = gym.spaces.Dict({
-            "drone0": gym.spaces.Box(low=-1.0, high=1.0, shape=(self.full_obs_dim,), dtype=np.float32),
-            "drone1": gym.spaces.Box(low=-1.0, high=1.0, shape=(self.full_obs_dim,), dtype=np.float32)
-        })
+        self.observation_space = gym.spaces.Dict(obs_dict)
         single_action_space = spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
         self.action_space = {agent: single_action_space for agent in self.agents}
 
@@ -244,6 +247,9 @@ class DroneRaceCurriculumEnv(gym.Env):
             # Use this version:
             if self.random_init:
                 position = self.sample_safe_start_position()
+                # low = np.array([-self.max_distance, -self.max_distance, 0.0])
+                # high = np.array([self.max_distance,  self.max_distance,  self.max_distance])
+                # position = np.random.uniform(low=low, high=high).astype(np.float32)
             else:
                 position = self.initialize_drones_closer(current_gate=gate_index, offset_distance=offset_distance, jitter_range=jitter_range)
 
@@ -381,23 +387,41 @@ class DroneRaceCurriculumEnv(gym.Env):
 
         # --- Collision Penalty (Curriculum Controlled) ---
         if self.enable_collision:
-            pos0 = self.vehicles["drone0"]["drone"].state[:3]
-            pos1 = self.vehicles["drone1"]["drone"].state[:3]
-            if np.linalg.norm(pos0 - pos1) < self.drone_collision_margin:
-                for agent in self.agents:
-                    rewards[agent] -= self.collision_penalty  # Penalty for collision.
-                    infos[agent]["collision"] = 1
-                if self.terminate_on_collision:
-                    dones["__all__"] = True
+            # Get positions of all drones
+            positions = {
+                drone_id: self.vehicles[drone_id]["drone"].state[:3]
+                for drone_id in self.vehicles
+            }
+
+            # Check collisions between all pairs of drones
+            for i, (drone_i, pos_i) in enumerate(positions.items()):
+                for drone_j, pos_j in list(positions.items())[i+1:]:
+                    if np.linalg.norm(pos_i - pos_j) < self.drone_collision_margin:
+                        # Apply collision penalty to both drones involved
+                        rewards[drone_i] -= self.collision_penalty
+                        rewards[drone_j] -= self.collision_penalty
+                        infos[drone_i]["collision"] = 1
+                        infos[drone_j]["collision"] = 1
+                        if self.terminate_on_collision and infos[self.training_agent]["collision"]:
+                            dones["__all__"] = True
 
         # --- Overtaking Bonus (Curriculum Controlled) ---
         if self.enable_takeover:
-            progress0 = self.vehicles["drone0"]["progress"]
-            progress1 = self.vehicles["drone1"]["progress"]
-            if progress0 > progress1:
-                rewards["drone0"] += self.takeover_reward
-            elif progress1 > progress0:
-                rewards["drone1"] += self.takeover_reward
+            # Get progress of all drones
+            progress = {
+                drone_id: self.vehicles[drone_id]["progress"]
+                for drone_id in self.vehicles
+            }
+
+            # Find the drone with maximum progress
+            max_progress = max(progress.values())
+
+            # Award takeover reward to all drones that have the maximum progress
+            # (in case of ties, all leading drones get the reward)
+            for drone_id, drone_progress in progress.items():
+                if drone_progress == max_progress:
+                    rewards[drone_id] += self.takeover_reward
+
 
         # Clip rewards and update previous progress.
         for agent in self.agents:
@@ -536,54 +560,132 @@ class DroneRaceCurriculumEnv(gym.Env):
         cos_yaw = np.array([np.cos(yaw_diff)], dtype=np.float32)
 
         normalized_progress = np.array([self.vehicles[agent]["progress"] / 25.0], dtype=np.float32)
-
-
-
-        # Determine opponent key.
-        opponent = "drone1" if agent == "drone0" else "drone0"
-        opponent_position = self.vehicles[opponent]["drone"].state[0:3]
-        opponent_rel_pos = opponent_position - position
-        normalized_opponent_rel_pos = opponent_rel_pos / self.max_distance
-        opponent_distance = np.linalg.norm(opponent_rel_pos)
-        normalized_opponent_distance = np.array([opponent_distance / self.max_distance], dtype=np.float32)
-
-        opponent_velocity = self.vehicles[opponent]["drone"].state[3:6]
-        normalized_opponent_velocity = opponent_velocity / self.max_vel
-
-        gate_ratio = (self.vehicles[agent]["progress"] + 1e-6) / (self.vehicles[opponent]["progress"] + 1e-6)
-        gate_ratio = np.array([gate_ratio], dtype=np.float32)
-
-        normalized_opponent_progress = np.array([self.vehicles[opponent]["progress"] / 25.0], dtype=np.float32)
-
         delta_velocity = velocity - self.vehicles[agent]["prev_velocity"]  # or compute as (current_velocity - previous_velocity) if
-
         normalized_delta_velocity = delta_velocity / self.max_vel
-
         normalized_time = np.array([self.current_step / self.max_steps], dtype=np.float32)
 
+        # Get information about all other drones (opponents)
+        opponents_info = {}
+        for other_agent in self.vehicles:
+            if other_agent != agent:
+                opponents_info[other_agent] = {
+                    "position": self.vehicles[other_agent]["drone"].state[0:3],
+                    "velocity": self.vehicles[other_agent]["drone"].state[3:6],
+                    "progress": self.vehicles[other_agent]["progress"]
+                }
 
+        # Calculate normalized values for all opponents
+        all_opponent_rel_pos = []
+        all_opponent_distances = []
+        all_opponent_velocities = []
+        all_opponent_progresses = []
+
+        for opponent, info in opponents_info.items():
+            # Relative position
+            opponent_rel_pos = info["position"] - position
+            opponent_normalized_rel_pos = opponent_rel_pos / self.max_distance
+            all_opponent_rel_pos.append(opponent_normalized_rel_pos)
+
+            # Distance
+            opponent_distance = np.linalg.norm(opponent_rel_pos)
+            opponent_normalized_distance = opponent_distance / self.max_distance
+            all_opponent_distances.append([opponent_normalized_distance])
+
+            # Velocity
+            opponent_normalized_velocity = info["velocity"] / self.max_vel
+            all_opponent_velocities.append(opponent_normalized_velocity)
+
+            # Progress
+            opponent_normalized_progress = info["progress"] / 25.0
+            all_opponent_progresses.append([opponent_normalized_progress])
+
+
+        # Convert lists to numpy arrays
+        all_opponent_rel_pos = np.concatenate(all_opponent_rel_pos)  # 3 values per opponent
+        all_opponent_distances = np.concatenate(all_opponent_distances)  # 1 value per opponent
+        all_opponent_velocities = np.concatenate(all_opponent_velocities)  # 3 values per opponent
+        all_opponent_progresses = np.concatenate(all_opponent_progresses)  # 1 value per opponent
+
+        # Calculate gate ratios for all opponents
+        gate_ratios = []
+        for opponent, info in opponents_info.items():
+            opponent_progress = info["progress"]
+            ratio = (self.vehicles[agent]["progress"] + 1e-6) / (opponent_progress + 1e-6)
+            gate_ratios.append([ratio])
+
+        # Convert to numpy array
+        gate_ratios = np.concatenate(gate_ratios, dtype=np.float32)  # 1 value per opponent
+
+        # print("Shapes of arrays:")
+        # print("normalized_relative_position:", np.array(normalized_relative_position).shape)
+        # print("normalized_distance:", np.array(normalized_distance).shape)
+        # print("normalized_position:", np.array(normalized_position).shape)
+        # print("normalized_velocity:", np.array(normalized_velocity).shape)
+        # print("projected_vel:", np.array(projected_vel).shape)
+        # print("normalized_speed:", np.array(normalized_speed).shape)
+        # print("normalized_delta_velocity:", np.array(normalized_delta_velocity).shape)
+        # print("normalized_angular_speed:", np.array(normalized_angular_speed).shape)
+        # print("normalized_angular_velocity:", np.array(normalized_angular_velocity).shape)
+        # print("one_hot:", np.array(one_hot).shape)
+        # print("sin_yaw:", np.array(sin_yaw).shape)
+        # print("cos_yaw:", np.array(cos_yaw).shape)
+        # print("gate_ratios:", np.array(gate_ratios).shape)
+        # print("normalized_time:", np.array(normalized_time).shape)
+        # print("normalized_heading_error:", np.array(normalized_heading_error).shape)
+        # print("normalized_progress:", np.array(normalized_progress).shape)
+        # print("all_opponent_rel_pos:", np.array(all_opponent_rel_pos).shape)
+        # print("all_opponent_distances:", np.array(all_opponent_distances).shape)
+        # print("all_opponent_velocities:", np.array(all_opponent_velocities).shape)
+        # print("all_opponent_progresses:", np.array(all_opponent_progresses).shape)
+
+        # Update the observation space concatenation 24 + 9*(n_opponents)
         obs = np.concatenate([
-            normalized_relative_position,      # 3 values.
-            normalized_distance,               # 1 value.
-            normalized_position,               # 3 values.
-            normalized_velocity,               # 3 values.
-            projected_vel,                     # 1 value.
-            normalized_speed,                  # 1 value.
-            normalized_delta_velocity,         # 3 values.
-            normalized_angular_speed,          # 1 value.
-            normalized_angular_velocity,       # 3 values.
-            one_hot,                           # num_targets values.
-            sin_yaw,                           # 1 value.
-            cos_yaw,                           # 1 value.
-            gate_ratio,                        # 1 value.
-            normalized_time,                   # 1 value.
-            normalized_heading_error,          # 1 value.
-            normalized_progress,               # 1 value.
-            normalized_opponent_rel_pos,       # 3 values.
-            normalized_opponent_distance,      # 1 value.
-            normalized_opponent_velocity,      # 3 values.
-            normalized_opponent_progress       # 1 value.
+            normalized_relative_position,      # 3 values
+            normalized_distance,               # 1 value
+            normalized_position,               # 3 values
+            normalized_velocity,               # 3 values
+            projected_vel,                     # 1 value
+            normalized_speed,                  # 1 value
+            normalized_delta_velocity,         # 3 values
+            normalized_angular_speed,          # 1 value
+            normalized_angular_velocity,       # 3 values
+            one_hot,                          # num_targets values
+            sin_yaw,                          # 1 value
+            cos_yaw,                          # 1 value
+            gate_ratios,                      # 1 * (n_opponents) values
+            normalized_time,                  # 1 value
+            normalized_heading_error,         # 1 value
+            normalized_progress,              # 1 value
+            all_opponent_rel_pos,            # 3 * (n_opponents) values
+            all_opponent_distances,          # 1 * (n_opponents) values
+            all_opponent_velocities,         # 3 * (n_opponents) values
+            all_opponent_progresses          # 1 * (n_opponents) values
         ])
+
+
+
+        # obs = np.concatenate([
+        #     normalized_relative_position,      # 3 values.
+        #     normalized_distance,               # 1 value.
+        #     normalized_position,               # 3 values.
+        #     normalized_velocity,               # 3 values.
+        #     projected_vel,                     # 1 value.
+        #     normalized_speed,                  # 1 value.
+        #     normalized_delta_velocity,         # 3 values.
+        #     normalized_angular_speed,          # 1 value.
+        #     normalized_angular_velocity,       # 3 values.
+        #     one_hot,                           # num_targets values.
+        #     sin_yaw,                           # 1 value.
+        #     cos_yaw,                           # 1 value.
+        #     gate_ratio,                        # 1 value.
+        #     normalized_time,                   # 1 value.
+        #     normalized_heading_error,          # 1 value.
+        #     normalized_progress,               # 1 value.
+        #     normalized_opponent_rel_pos,       # 3 values.
+        #     normalized_opponent_distance,      # 1 value.
+        #     normalized_opponent_velocity,      # 3 values.
+        #     normalized_opponent_progress       # 1 value.
+        # ])
 
         self.vehicles[agent]["prev_velocity"] = np.copy(velocity)
 
@@ -639,6 +741,34 @@ class DroneRaceCurriculumEnv(gym.Env):
         opponent_distance = np.linalg.norm(opponent_rel_pos)
         normalized_opponent_distance = np.array([opponent_distance / self.max_distance], dtype=np.float32)
 
+        # Get information about all other drones (opponents)
+        opponents_info = {}
+        for other_agent in self.vehicles:
+            if other_agent != agent:
+                opponents_info[other_agent] = {
+                    "position": self.vehicles[other_agent]["drone"].state[0:3]
+                }
+
+        # Calculate normalized values for all opponents
+        all_opponent_rel_pos = []
+        all_opponent_distances = []
+
+        for opponent, info in opponents_info.items():
+            # Relative position
+            opponent_rel_pos = info["position"] - position
+            normalized_rel_pos = opponent_rel_pos / self.max_distance
+            all_opponent_rel_pos.append(normalized_rel_pos)
+
+            # Distance
+            opponent_distance = np.linalg.norm(opponent_rel_pos)
+            normalized_distance = opponent_distance / self.max_distance
+            all_opponent_distances.append([normalized_distance])
+
+
+        # Convert lists to numpy arrays
+        all_opponent_rel_pos = np.concatenate(all_opponent_rel_pos)  # 3 values per opponent
+        all_opponent_distances = np.concatenate(all_opponent_distances)  # 1 value per opponent
+        # 13 + 4*(n_opponents) + n_targets
         obs = np.concatenate([
             norm_rel_pos,         # 3 values
             norm_distance,        # 1 value
@@ -648,8 +778,8 @@ class DroneRaceCurriculumEnv(gym.Env):
             norm_position,        # 3 values
             sin_yaw,              # 1 value
             cos_yaw,              # 1 value
-            normalized_opponent_rel_pos,  # 3 values: relative opponent position normalized
-            normalized_opponent_distance  # 1 value: normalized opponent distance
+            all_opponent_rel_pos,  # 3 * (n_opponents) values
+            all_opponent_distances  # 1 * (n_opponents) values
         ])
 
         return obs
@@ -664,6 +794,7 @@ class DroneRaceCurriculumEnv(gym.Env):
 
     def get_state(self, agent):
         return self.vehicles[agent]["drone"].state
+
 
 
 

@@ -15,10 +15,9 @@ from stable_baselines3.common import type_aliases
 # with frozen opponent policy for drone1.
 # ----------------------------------------
 class SelfPlayWrapper(gym.Env):
-    def __init__(self, env, frozen_opponent_policies, return_dict=False):
+    def __init__(self, env, frozen_opponent_policy, return_dict=False):
         self.env = env
-        # self.frozen_opponent_policy = frozen_opponent_policy
-        self.frozen_opponent_policies = frozen_opponent_policies
+        self.frozen_opponent_policy = frozen_opponent_policy
         self.observation_space = env.observation_space["drone0"]
         self.action_space = env.action_space["drone0"]
         self.last_full_obs = None
@@ -30,26 +29,11 @@ class SelfPlayWrapper(gym.Env):
         self.last_full_obs = full_obs
         return full_obs["drone0"], info
 
-    # def step(self, action):
-    #     # Use the frozen opponent policy for drone1.
-    #     opponent_obs = self.last_full_obs["drone1"]
-    #     opp_action = self.frozen_opponent_policy(opponent_obs)
-    #     actions = {"drone0": action, "drone1": opp_action}
-    #     full_obs, rewards, dones, truncated, info = self.env.step(actions)
-    #     self.last_full_obs = full_obs
-    #     return full_obs["drone0"], rewards["drone0"], dones["__all__"], truncated, info
     def step(self, action):
-        actions = {"drone0": action}  # Main agent's action
-
-        # print("Available opponent policies:", list(self.frozen_opponent_policies.keys()))
-
-        # Get actions for all opponent agents
-        for agent_id, policy in self.frozen_opponent_policies.items():
-            opponent_obs = self.last_full_obs[agent_id]
-            opponent_action = policy(opponent_obs)
-            # print(f"Agent {agent_id} action:", opponent_action)
-            actions[agent_id] = opponent_action
-
+        # Use the frozen opponent policy for drone1.
+        opponent_obs = self.last_full_obs["drone1"]
+        opp_action = self.frozen_opponent_policy(opponent_obs)
+        actions = {"drone0": action, "drone1": opp_action}
         full_obs, rewards, dones, truncated, info = self.env.step(actions)
         self.last_full_obs = full_obs
         return full_obs["drone0"], rewards["drone0"], dones["__all__"], truncated, info
@@ -66,33 +50,27 @@ class SelfPlayWrapper(gym.Env):
         return self.env.get_state(agent)
 
 
+# ----------------------------------------
+# Evaluation function: play several full episodes on the base multi-agent environment.
+# A win is counted if training agent (drone0) passes more gates than the opponent.
+# ----------------------------------------
 def evaluate_policies(env, training_model, num_episodes=1):
     wins = 0
     for _ in range(num_episodes):
         obs, info = env.reset()
         done = False
         while not done:
+            # Both agents use their respective policies.
             action_tr, _ = training_model.predict(obs, deterministic=True)
             obs, rewards, dones, trunc, info = env.step(action_tr)
             if isinstance(dones, dict):
                 done = dones.get("__all__", False)
             else:
                 done = dones
-                
-        # Get training drone's progress
         progress_tr = info["drone0"]["progress"]
-        
-        # Check against all opponent drones
-        win_current_episode = True
-        for drone_id, drone_info in info.items():
-            if drone_id != "drone0":  # Skip the training drone
-                if progress_tr <= drone_info["progress"]:
-                    win_current_episode = False
-                    break
-        
-        if win_current_episode:
+        progress_op = info["drone1"]["progress"]
+        if progress_tr > progress_op:
             wins += 1
-            
     return wins / num_episodes
 
 # ----------------------------------------
@@ -151,27 +129,6 @@ def write_env_parameters(main_folder, env_args, **kwargs):
         f.write("\n")
 
 
-def log_trial_results(main_folder, trial_number, score, mean_targets_reached, std_targets_reached,
-                      mean_speed, std_speed, mean_collisions, std_collisions):
-    log_line = (f"Trial {trial_number} Score: {score:.2f}, "
-                f"Mean Targets Reached={mean_targets_reached:.2f}/±{std_targets_reached:.2f} "
-                f"Mean Speed={mean_speed:.2f}/±{std_speed:.2f} "
-                f"Mean Collisions={mean_collisions:.2f}/±{std_collisions:.2f}\n")
-
-    with open(os.path.join(main_folder, "all_trials.txt"), "a") as f:
-        f.write(log_line)
-
-
-
-def print_results(main_folder, stage, score, mean_targets_reached, std_targets_reached,
-                      mean_speed, std_speed, mean_collisions, std_collisions):
-    log_line = (f"Level: {stage} Score: {score:.2f}, "
-                f"Mean Targets Reached={mean_targets_reached:.2f}/±{std_targets_reached:.2f} "
-                f"Mean Speed={mean_speed:.2f}/±{std_speed:.2f} "
-                f"Mean Collisions={mean_collisions:.2f}/±{std_collisions:.2f}\n")
-
-    with open(os.path.join(main_folder, "results.txt"), "w") as f:
-        f.write(log_line)
 
 
 def evaluate_policy_updated(

@@ -1,19 +1,18 @@
-from basic_env import DroneNavEnv
-from drone_gate_env import DroneGateEnv
-from drone_vel_gate_env import DroneVelGateEnv
-from drone_race_centralized import DroneRaceCentralizedEnv
-from drone_race_selfplay import *
-from drone_race_curriculum import *
+from utils import *
+from envs.drone_race_curriculum_v7 import DroneRaceCurriculumEnv
 from stable_baselines3 import PPO, SAC
 import time
 import numpy as np
 import pandas as pd
 import os
 from test_multiple import *
+from utils import *
+
 
 main_folder = "Results_22Feb_2025/22February_1610_curriculum_2drones_v3_stage_5"
 selfplay = True
 random_init = False
+env_class = DroneRaceCurriculumEnv
 
 algorithm = "ppo"  # Replace with your algorithm name, e.g., "ppo" or "sac".
 # env_args = {"n_gates": n_gates, "radius":radius, "action_coeff":action_coeff, "distance_exp_decay":distance_exp_decay, "w_distance":w_distance,
@@ -100,7 +99,7 @@ if __name__ == "__main__":
         print("Environment parameters:", env_args)
 
 
-    env = DroneRaceCurriculumEnv(**env_args)
+    env = env_class(**env_args)
     if selfplay:
         dummy_opponent_policy = lambda obs: np.zeros_like(env.action_space["drone1"].sample())
         env = SelfPlayWrapper(env, dummy_opponent_policy)

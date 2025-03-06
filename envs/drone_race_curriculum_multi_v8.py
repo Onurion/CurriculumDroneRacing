@@ -21,6 +21,7 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
                  w_alignment: float=0.5,
                  w_deviation: float=0.0,
                  w_inactivity: float=0.0,
+                 w_collision_penalty: float=0.0,
                  reward_type: int=2,
                  observation_type: int=2,
                  buffer_size: int=10,
@@ -36,7 +37,8 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
                  drone_collision_margin: float =0.5,
                  gate_passing_tolerance: float = 0.5,
                  enable_takeover:bool=False,
-                 takeover_reward: float =0.0):
+                 takeover_reward: float =0.0,
+                 jitter_range:list = [0.25, 0.75]):
         super(DroneRaceCurriculumMultiEnv, self).__init__()
 
         # Simulation parameters.
@@ -46,6 +48,7 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
         self.gate_size = gate_size  # 1m x 1m gate
         self.gate_passing_tolerance = gate_passing_tolerance
         self.random_init = random_init
+        self.jitter_range = jitter_range
 
         # Curriculum parameters.
         self.action_coefficient = action_coefficient          # Multiplier applied to the raw action.
@@ -56,6 +59,7 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
         self.terminate_on_collision = terminate_on_collision  # Terminate episode on collision.
         self.enable_takeover = enable_takeover    # Whether takeover bonus is enabled.
         self.takeover_reward = takeover_reward    # Reward bonus for overtaking in selfplay.
+        
 
         # Reward parameters.
         self.a = distance_exp_decay                   # Controls the shape of the exponential decay.
@@ -64,6 +68,7 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
         self.w_deviation = w_deviation            # Weight for deviation penalty.
         self.w_inactivity = w_inactivity       # Weight for inactivity penalty.
         self.w_alignment = w_alignment
+        self.w_collision_penalty = w_collision_penalty  # Weight for collision penalty.
 
         self.is_buffer_obs = is_buffer_obs
 
@@ -125,6 +130,7 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
 
         # Observation: the observation vector length is 17 + num_targets.
         self.num_targets = self.gate_positions.shape[0]
+        self.reward_type = reward_type
 
         # Reward function selector.
         self.reward_function = self.reward_function_1 if reward_type == 1 else self.reward_function_2
@@ -239,7 +245,7 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
                     )
 
         offset_distance = np.random.uniform(low=1.5, high=3.0)
-        jitter_range = np.random.uniform(low=0.25, high=0.75)
+        jitter_range = np.random.uniform(low=self.jitter_range[0], high=self.jitter_range[1])
         gate_index = np.random.randint(low=0, high=len(self.gate_positions))
 
         for agent in self.agents:
@@ -338,8 +344,19 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
             else:
                 unit_rel_pos = np.zeros_like(rel_pos)
 
+            
+            opponents_info = {}
+            for other_agent in self.vehicles:
+                if other_agent != agent:
+                    opponents_info[other_agent] = {
+                        "position": self.vehicles[other_agent]["drone"].state[0:3],
+                    }
+
             # Compute reward based on the chosen reward function.
-            reward = self.reward_function(distance, vehicle["prev_distance"], velocity, unit_rel_pos)
+            if self.reward_type == 3:
+                reward = self.reward_function_3(distance, vehicle["prev_distance"], velocity, unit_rel_pos, opponents_info, position)
+            else:
+                reward = self.reward_function(distance, vehicle["prev_distance"], velocity, unit_rel_pos)
 
             # Check if the target gate is reached.
             dx = position[0] - current_gate_position[0]
@@ -498,6 +515,50 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
                   self.w_distance_change * bonus_distance -
                   self.w_deviation * deviation +
                   self.w_inactivity * speed_gap)
+        return reward
+    
+    def reward_function_3(self, distance, prev_distance, velocity, unit_rel_pos, opponents_info, agent_position):
+        # Original reward components
+        x = distance / self.max_distance
+        base_reward = 2 * (np.exp(-self.a * x) - np.exp(-self.a)) / (1 - np.exp(-self.a)) - 1
+        delta_distance = prev_distance - distance
+        bonus_distance = 2.5 * delta_distance
+        vel_norm = np.linalg.norm(velocity)
+
+        # Speed reward/penalty
+        desired_speed = self.minimum_velocity
+        if vel_norm <= desired_speed:
+            speed_gap = vel_norm - self.minimum_velocity
+        else:
+            speed_gap = desired_speed - vel_norm
+
+        # Direction deviation penalty
+        if vel_norm > 1e-6:
+            cos_angle = np.dot(velocity, unit_rel_pos) / (vel_norm + 1e-6)
+            deviation = 1.0 - cos_angle
+        else:
+            deviation = 0.0
+
+        # New collision avoidance term
+        collision_penalty = 0
+        safety_radius = self.drone_collision_margin * 3 # Define minimum safe distance between drones
+
+        for drone_id, info in opponents_info.items():
+            opponent_pos = info["position"]
+            distance_to_opponent = np.linalg.norm(agent_position - opponent_pos)
+            
+            if distance_to_opponent < safety_radius:
+                # Exponential penalty that increases as drones get closer
+                collision_penalty += np.exp(safety_radius - distance_to_opponent) - 1
+
+        collision_penalty = collision_penalty if collision_penalty > 0 else 0
+        # Combine all reward components
+        reward = (self.w_distance * base_reward +
+                self.w_distance_change * bonus_distance -
+                self.w_deviation * deviation +
+                self.w_inactivity * speed_gap -
+                self.w_collision_penalty * collision_penalty)  # Add collision penalty
+
         return reward
 
     def _get_obs_2(self, agent):

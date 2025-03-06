@@ -135,14 +135,7 @@ def evaluate_model(model, env, n_episodes=10, verbose=False, save_csv=False, mai
 
     return targets_reached_list, avg_speed_list, total_reward_list, collisions_list
 
-def get_base_env_with_agents(env):
-    """
-    Recursively unwrap the environment until you find an object with an 'agents' attribute.
-    """
-    current_env = env
-    while not hasattr(current_env, "agents") and hasattr(current_env, "env"):
-        current_env = current_env.env
-    return current_env
+
 
 def str_to_bool(s):
     return s.strip().lower() in ["true", "1", "yes"]

@@ -23,6 +23,8 @@ class SelfPlayWrapper(gym.Env):
         self.action_space = env.action_space["drone0"]
         self.last_full_obs = None
         self.vehicles = env.vehicles
+        self.gates = env.gates
+        self.dt = env.dt
         # self.return_dict = return_dict
 
     def reset(self, **kwargs):
@@ -537,3 +539,556 @@ class CustomEvalCallback(EvalCallback):
         """
         if self.callback:
             self.callback.update_locals(locals_)
+
+
+def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=False, save_csv=False, 
+                              main_folder="", visualize=False, save_path=None, create_video=False):
+    """
+    Evaluate a given model in the provided environment with added visualization capability.
+    Returns a Pandas DataFrame with metrics aggregated over episodes.
+    """
+    import matplotlib
+    # Use Agg backend to avoid window management issues
+    matplotlib.use('Agg')
+    
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import os
+    import pandas as pd
+    from mpl_toolkits.mplot3d import Axes3D
+    import matplotlib.gridspec as gridspec
+    
+    episode_stats = []  # To store metrics per episode
+    total_reward_list = []
+    avg_speed_list = []
+    targets_reached_list = []
+    collisions_list = []
+
+    # Get base environment and agents
+    base_env = get_base_env_with_agents(env)
+    if not hasattr(base_env, "agents"):
+        raise AttributeError("The base environment does not have an 'agents' attribute.")
+    agents = base_env.agents
+    
+    # Create visualization directory if needed
+    if visualize and save_path:
+        os.makedirs(save_path, exist_ok=True)
+    
+    # Set up visualization colors
+    drone_colors = plt.cm.tab10(np.linspace(0, 1, 10))
+    gate_colors = plt.cm.Reds(np.linspace(0.3, 0.8, len(base_env.gates)))
+    
+    for episode in range(n_episodes):
+        obs, info = env.reset()
+        done = False
+        total_reward = 0.0
+        steps = 0
+        speeds = {}          # To store each agent's speeds over steps
+        targets_reached = {}  # To store the final progress reported for each agent
+        
+        # For visualization tracking
+        positions_history = []
+        velocities_history = []
+        gate_indices_history = []
+        collision_history = []
+        
+        for agent in agents:
+            speeds[agent] = []
+            targets_reached[agent] = 0.0
+
+        # Run one episode.
+        while not done and steps < max_steps:  # Add a step limit to prevent infinite loops
+            action, _ = model.predict(obs, deterministic=True)
+            obs, reward, done, truncated, info = env.step(action)
+            total_reward += reward
+            steps += 1
+            
+            # Gather data for visualization
+            step_positions = []
+            step_velocities = []
+            step_gate_indices = []
+            step_collisions = []
+            
+            for agent_idx, agent in enumerate(agents):
+                state = base_env.get_state(agent)
+                speeds[agent].append(np.linalg.norm(state[3:6]))
+                targets_reached[agent] = base_env.vehicles[agent]["progress"]
+                
+                # Extract position and velocity for visualization
+                pos = state[0:3]
+                vel = state[3:6]
+                current_gate = base_env.vehicles[agent]["current_target_index"]
+                
+                step_positions.append(pos)
+                step_velocities.append(vel)
+                step_gate_indices.append(current_gate)
+                
+                # Check for collisions
+                if "collision" in info[agent] and info[agent]["collision"]:
+                    step_collisions.append((agent_idx, agent_idx))  # Format to match other visualization
+            
+            # Append step data to history
+            positions_history.append(np.array(step_positions))
+            velocities_history.append(np.array(step_velocities))
+            gate_indices_history.append(step_gate_indices)
+            if step_collisions:
+                collision_history.append((steps, step_collisions))
+            
+            # Visualize each step if requested
+            if visualize and (steps % 2 == 0 or done) and save_path:  # Save every other step
+                try:
+                    # Close any existing figures to prevent memory leaks
+                    plt.close('all')
+                    
+                    fig = visualize_step(
+                        base_env, 
+                        positions_history,
+                        velocities_history,
+                        gate_indices_history,
+                        step_collisions,
+                        drone_colors,
+                        gate_colors,
+                        steps,
+                        total_reward,
+                        safety_radius=base_env.env.drone_collision_margin
+                    )
+                    
+                    plt.savefig(f"{save_path}/step_{steps:03d}.png", dpi=80)
+                    plt.close(fig)
+                except Exception as e:
+                    print(f"Visualization error: {e}")
+
+        total_reward_list.append(total_reward)
+        if verbose:
+            print(f"Episode {episode+1}/{n_episodes}: Total Reward={total_reward:.2f}, Steps={steps}")
+
+        avg_speed = {}
+        for agent in agents:
+            # Compute the average speed per agent.
+            avg_speed[agent] = np.mean(speeds[agent])
+            if verbose:
+                print(f"Agent: {agent} Targets Reached={targets_reached[agent]}, Avg Speed={avg_speed[agent]:.2f}")
+            avg_speed_list.append(avg_speed[agent])
+            targets_reached_list.append(targets_reached[agent])
+            collisions_list.append(1 if "collision" in info[agent] and info[agent]["collision"] else 0)
+
+        episode_stats.append({
+            "episode": episode,
+            "total_reward": total_reward,
+            "steps": steps,
+            "targets_reached": targets_reached,
+            "avg_speed": avg_speed,
+            "collisions": sum(1 for a in agents if "collision" in info[a] and info[a]["collision"])
+        })
+        
+        # Create video from frames if requested
+        if visualize and create_video and save_path:
+            try:
+                video_path = f"{save_path}/episode_{episode}_video.mp4"
+                create_video_from_frames(save_path, video_path)
+                
+                # Clear frames to prepare for next episode
+                if episode < n_episodes - 1:
+                    import glob
+                    for frame_file in glob.glob(f"{save_path}/step_*.png"):
+                        os.remove(frame_file)
+            except Exception as e:
+                print(f"Video creation error: {e}")
+
+    # Calculate mean metrics
+    mean_reward = np.mean(total_reward_list)
+    mean_speed = np.mean(avg_speed_list)
+    std_speed = np.std(avg_speed_list)
+    mean_targets_reached = np.mean(targets_reached_list)
+    std_targets_reached = np.std(targets_reached_list)
+    mean_collisions = np.mean(collisions_list)
+    std_collisions = np.std(collisions_list)
+
+    print(f"\nEvaluation results: Mean Reward={mean_reward:.2f}, Mean Speed={mean_speed:.2f}/±{std_speed:.2f}, "
+          f"Mean Targets Reached={mean_targets_reached:.2f}/±{std_targets_reached:.2f} Mean Collisions={mean_collisions:.2f}/±{std_collisions:.2f}")
+
+    if save_csv:
+        stats_df = pd.DataFrame(episode_stats)
+        results_csv = os.path.join(main_folder, "evaluation_results.csv")
+        stats_df.to_csv(results_csv, index=False)
+
+    return targets_reached_list, avg_speed_list, total_reward_list, collisions_list
+
+def get_base_env_with_agents(env):
+    """
+    Recursively unwrap the environment until you find an object with an 'agents' attribute.
+    """
+    current_env = env
+    while not hasattr(current_env, "agents") and hasattr(current_env, "env"):
+        current_env = current_env.env
+    return current_env
+
+def visualize_step(env, positions_history, velocities_history, gate_indices_history, 
+                 collisions, drone_colors, gate_colors, current_step, total_reward, safety_radius:float = 0.5):
+    """
+    Visualize the current simulation state in a similar style to the IBR approach.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from mpl_toolkits.mplot3d import Axes3D
+    import matplotlib.gridspec as gridspec
+    
+    # Create figure with explicit renderer
+    fig = plt.figure(figsize=(12, 10), dpi=80)
+    gs = gridspec.GridSpec(3, 3)
+    
+    # 3D view of the environment
+    ax_3d = fig.add_subplot(gs[:2, :], projection='3d')
+    
+    # Status panel
+    ax_status = fig.add_subplot(gs[2, 0])
+    ax_status.axis('off')
+    
+    # Top-down view
+    ax_top = fig.add_subplot(gs[2, 1])
+    
+    # Progress plot
+    ax_progress = fig.add_subplot(gs[2, 2])
+    
+    # Set up axes
+    max_bounds = 10.0  # Set an appropriate boundary
+    
+    ax_3d.set_xlabel('X (m)')
+    ax_3d.set_ylabel('Y (m)')
+    ax_3d.set_zlabel('Z (m)')
+    ax_3d.set_title('Multi-Drone Gate Navigation (RL)', fontsize=14)
+    ax_3d.set_xlim(-max_bounds, max_bounds)
+    ax_3d.set_ylim(-max_bounds, max_bounds)
+    ax_3d.set_zlim(0, max_bounds)
+    
+    ax_top.set_title('Top-Down View', fontsize=10)
+    ax_top.set_xlabel('X (m)')
+    ax_top.set_ylabel('Y (m)')
+    ax_top.set_xlim(-max_bounds, max_bounds)
+    ax_top.set_ylim(-max_bounds, max_bounds)
+    ax_top.set_aspect('equal')
+    ax_top.grid(True, alpha=0.3)
+    
+    ax_progress.set_title('Gate Progress', fontsize=10)
+    ax_progress.set_xlabel('Simulation Step')
+    ax_progress.set_ylabel('Gate Index')
+    ax_progress.set_xlim(0, 100)  # Adjust as needed
+    ax_progress.set_ylim(-0.5, len(env.gates) - 0.5)
+    ax_progress.grid(True, alpha=0.3)
+    
+    # Draw world environment
+    # Draw circular boundary
+    theta = np.linspace(0, 2*np.pi, 50)
+    world_radius = 10.0  # Set an appropriate radius
+    x = world_radius * np.cos(theta)
+    y = world_radius * np.sin(theta)
+    z = np.zeros_like(theta)
+    
+    ax_3d.plot(x, y, z, color="k", alpha=0.3, linewidth=1)
+    ax_top.plot(x, y, color="k", alpha=0.3, linewidth=1)
+    
+    # Draw ground plane
+    x_grid = np.linspace(-world_radius, world_radius, 5)
+    y_grid = np.linspace(-world_radius, world_radius, 5)
+    X, Y = np.meshgrid(x_grid, y_grid)
+    Z = np.zeros_like(X)
+    
+    ax_3d.plot_surface(X, Y, Z, color='gray', alpha=0.1, edgecolor='none')
+    
+    # Draw gates
+    for i, gate in enumerate(env.gates):
+        try:
+            # Check if gate is a dictionary (as in the previous code)
+            if isinstance(gate, dict):
+                center = gate["position"] if "position" in gate else gate["center"]
+                yaw = gate["yaw"]
+            else:
+                # Assume gate is an object with attributes
+                center = gate.position if hasattr(gate, "position") else gate.center
+                yaw = gate.yaw
+            
+            # Create gate circle
+            gate_radius = 1.0
+            theta = np.linspace(0, 2*np.pi, 30)
+            circle_x = gate_radius * np.cos(theta)
+            circle_y = gate_radius * np.sin(theta)
+            circle_z = np.zeros_like(theta)
+            
+            # Rotate and translate
+            rot_x = np.cos(yaw) * circle_x - np.sin(yaw) * circle_y
+            rot_y = np.sin(yaw) * circle_x + np.cos(yaw) * circle_y
+            
+            gate_x = center[0] + rot_x
+            gate_y = center[1] + rot_y
+            gate_z = center[2] + circle_z
+            
+            # Determine gate color
+            gate_color = gate_colors[i]
+            alpha = 0.5
+            linewidth = 1
+            
+            # Check if this gate is a current target for any drone
+            active = False
+            if len(gate_indices_history) > 0:
+                current_gates = gate_indices_history[-1]
+                if i in current_gates:
+                    active = True
+                    alpha = 0.8
+                    linewidth = 2
+            
+            # Draw gate in 3D view
+            ax_3d.plot(gate_x, gate_y, gate_z, '-', color=gate_color, 
+                      linewidth=linewidth, alpha=alpha)
+            
+            # Draw gate normal vector
+            normal_length = 1.5
+            normal_x = [center[0], center[0] + normal_length * np.cos(yaw)]
+            normal_y = [center[1], center[1] + normal_length * np.sin(yaw)]
+            normal_z = [center[2], center[2]]
+            ax_3d.plot(normal_x, normal_y, normal_z, ':', color=gate_color, 
+                      linewidth=linewidth, alpha=0.6)
+            
+            # Draw gate in top-down view
+            ax_top.plot(gate_x, gate_y, '-', color=gate_color, 
+                       linewidth=linewidth, alpha=alpha)
+            
+            # Add gate label
+            ax_3d.text(center[0], center[1], center[2]+1.2, f"G{i}", 
+                     color='red' if active else 'darkred', fontsize=10, 
+                     ha='center', weight='bold' if active else 'normal')
+            
+            ax_top.text(center[0], center[1], f"G{i}", 
+                      color='red' if active else 'darkred', fontsize=9, 
+                      ha='center', weight='bold' if active else 'normal')
+        except Exception as e:
+            print(f"Error drawing gate {i}: {e}")
+    
+    # Draw drones
+    if len(positions_history) > 0:
+        positions = positions_history[-1]
+        velocities = velocities_history[-1]
+        
+        # Set up collided drones
+        collided_drones = set()
+        if collisions:
+            for collision in collisions:
+                collided_drones.add(collision[0])
+                collided_drones.add(collision[1])
+        
+        # Draw each drone
+        for i, agent in enumerate(env.agents):
+            try:
+                pos = positions[i]
+                vel = velocities[i]
+                
+                # Get current gate index for this drone
+                if len(gate_indices_history) > 0:
+                    current_gate_idx = gate_indices_history[-1][i]
+                else:
+                    current_gate_idx = env.vehicles[agent]["current_target_index"]
+                
+                # Make sure gate index is within bounds
+                current_gate_idx = min(current_gate_idx, len(env.gates) - 1)
+                
+                # Get gate position
+                gate = env.gates[current_gate_idx]
+                if isinstance(gate, dict):
+                    gate_pos = gate["position"] if "position" in gate else gate["center"]
+                else:
+                    gate_pos = gate.position if hasattr(gate, "position") else gate.center
+                
+                # Determine drone color and style
+                drone_color = drone_colors[i % len(drone_colors)]
+                marker_size = 100
+                edge_width = 1
+                
+                # Highlight drones involved in collisions
+                if i in collided_drones:
+                    edge_width = 3
+                    marker_size = 150
+                
+                # 3D view - drone position
+                ax_3d.scatter(pos[0], pos[1], pos[2], color=drone_color, 
+                             s=marker_size, edgecolors='red' if i in collided_drones else 'black',
+                             linewidths=edge_width, label=f'D{i}→G{current_gate_idx}')
+                
+                # Top-down view - drone position
+                ax_top.scatter(pos[0], pos[1], color=drone_color, 
+                              s=marker_size*0.7, edgecolors='red' if i in collided_drones else 'black',
+                              linewidths=edge_width)
+                
+                # Draw safety radius for collided drones
+                if i in collided_drones:
+                    # Create a circle in top-down view
+                    theta = np.linspace(0, 2*np.pi, 20)
+                    circle_x = pos[0] + safety_radius * np.cos(theta)
+                    circle_y = pos[1] + safety_radius * np.sin(theta)
+                    ax_top.plot(circle_x, circle_y, '--', color='red', alpha=0.4)
+                
+                # Draw velocity vectors
+                vel_norm = np.linalg.norm(vel)
+                if vel_norm > 0.1:
+                    vel_scale = 0.7  # Scale factor for velocity vector
+                    vel_x = [pos[0], pos[0] + vel[0]/vel_norm * vel_scale]
+                    vel_y = [pos[1], pos[1] + vel[1]/vel_norm * vel_scale]
+                    vel_z = [pos[2], pos[2] + vel[2]/vel_norm * vel_scale]
+                    
+                    ax_3d.plot(vel_x, vel_y, vel_z, '->', color=drone_color, 
+                              linewidth=2, alpha=0.8)
+                    ax_top.plot([pos[0], pos[0] + vel[0]/vel_norm * vel_scale],
+                               [pos[1], pos[1] + vel[1]/vel_norm * vel_scale],
+                               '->', color=drone_color, linewidth=2, alpha=0.8)
+                
+                # Draw line to current target gate
+                ax_3d.plot([pos[0], gate_pos[0]], [pos[1], gate_pos[1]], 
+                          [pos[2], gate_pos[2]], color=drone_color, 
+                          linestyle=':', alpha=0.3)
+                ax_top.plot([pos[0], gate_pos[0]], [pos[1], gate_pos[1]], 
+                           color=drone_color, linestyle=':', alpha=0.3)
+            except Exception as e:
+                print(f"Error drawing drone {i}: {e}")
+    
+    # Draw trajectories (last few positions)
+    trajectory_length = min(10, len(positions_history))
+    if trajectory_length > 1:
+        for i, agent in enumerate(env.agents):
+            try:
+                color = drone_colors[i % len(drone_colors)]
+                traj = np.array([positions_history[-j][i] for j in range(1, trajectory_length+1)][::-1])
+                
+                if len(traj) > 1:
+                    ax_3d.plot(traj[:, 0], traj[:, 1], traj[:, 2], 
+                              color=color, linewidth=1.5, alpha=0.6)
+                    ax_top.plot(traj[:, 0], traj[:, 1], 
+                               color=color, linewidth=1.5, alpha=0.6)
+            except Exception as e:
+                print(f"Error drawing trajectory for drone {i}: {e}")
+    
+    # Update progress plot
+    if len(gate_indices_history) > 0:
+        try:
+            # Convert gate indices to numpy array
+            progress_data = np.array(gate_indices_history)
+            steps = np.arange(len(gate_indices_history))
+            
+            for i, agent in enumerate(env.agents):
+                color = drone_colors[i % len(drone_colors)]
+                ax_progress.step(steps, progress_data[:, i], where='post', 
+                                color=color, linewidth=1.5, alpha=0.7, label=f'Drone {i}')
+            
+            # Add vertical line for current step
+            ax_progress.axvline(x=len(steps)-1, color='gray', linestyle='--', alpha=0.5)
+        except Exception as e:
+            print(f"Error plotting progress: {e}")
+    
+    # Add legend to progress plot
+    ax_progress.legend(loc='upper left', fontsize=8)
+    
+    # Adjust tick marks to match gate indices
+    ax_progress.set_yticks(range(len(env.gates)))
+    ax_progress.set_yticklabels([f'G{i}' for i in range(len(env.gates))])
+    
+    # Update status panel
+    ax_status.clear()
+    ax_status.axis('off')
+    
+    # Title
+    ax_status.text(0.05, 0.95, "STATUS", fontsize=12, weight='bold')
+    
+    # Simulation info
+    sim_time = current_step * env.dt if hasattr(env, 'dt') else current_step * 0.1  # Default to 0.1s if dt not available
+    ax_status.text(0.05, 0.90, f"Time: {sim_time:.1f}s", fontsize=10)
+    ax_status.text(0.05, 0.85, f"Step: {current_step}", fontsize=10)
+    ax_status.text(0.05, 0.80, f"Reward: {total_reward:.2f}", fontsize=10)
+    
+    collision_count = len(collided_drones)
+    ax_status.text(0.05, 0.75, f"Collisions: {collision_count}", fontsize=10, 
+                 color='red' if collision_count > 0 else 'black')
+    
+    # Drone info
+    if len(positions_history) > 0:
+        positions = positions_history[-1]
+        velocities = velocities_history[-1]
+        
+        y_offset = 0.70
+        for i, agent in enumerate(env.agents):
+            try:
+                color = drone_colors[i % len(drone_colors)]
+                pos = positions[i]
+                vel = velocities[i]
+                speed = np.linalg.norm(vel)
+                
+                if len(gate_indices_history) > 0:
+                    gate_idx = gate_indices_history[-1][i]
+                else:
+                    gate_idx = env.vehicles[agent]["current_target_index"]
+                
+                # Make sure gate index is within bounds
+                gate_idx = min(gate_idx, len(env.gates) - 1)
+                
+                # Get gate position
+                gate = env.gates[gate_idx]
+                if isinstance(gate, dict):
+                    gate_pos = gate["position"] if "position" in gate else gate["center"]
+                else:
+                    gate_pos = gate.position if hasattr(gate, "position") else gate.center
+                
+                dist_to_gate = np.linalg.norm(pos - gate_pos)
+                
+                # Add drone info
+                ax_status.text(0.05, y_offset, f"Drone {i}", fontsize=10, weight='bold', color=color)
+                ax_status.text(0.05, y_offset-0.04, f"Gate: {gate_idx}", fontsize=9)
+                ax_status.text(0.05, y_offset-0.08, f"Dist: {dist_to_gate:.2f}m", fontsize=9)
+                ax_status.text(0.05, y_offset-0.12, f"Speed: {speed:.2f}m/s", fontsize=9)
+                
+                y_offset -= 0.15
+            except Exception as e:
+                print(f"Error updating status for drone {i}: {e}")
+    
+    # Adjust plot layout
+    plt.tight_layout()
+    
+    return fig
+
+
+def create_video_from_frames(frame_directory, output_file="simulation_video.mp4", fps=10):
+    """Create a video from a directory of frame images"""
+    try:
+        import cv2
+        import os
+        import glob
+        
+        # Find all frame files
+        frame_files = sorted(glob.glob(os.path.join(frame_directory, "step_*.png")))
+        
+        if not frame_files:
+            print(f"No frame files found in {frame_directory}")
+            return None
+        
+        print(f"Creating video from {len(frame_files)} frames...")
+        
+        # Read first frame to get dimensions
+        first_frame = cv2.imread(frame_files[0])
+        height, width, layers = first_frame.shape
+        
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Use mp4v codec
+        video = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
+        
+        # Add each frame to the video
+        for frame_file in frame_files:
+            video.write(cv2.imread(frame_file))
+        
+        # Release the video writer
+        video.release()
+        
+        print(f"Video created successfully: {output_file}")
+        return output_file
+    
+    except ImportError:
+        print("Error: OpenCV (cv2) is required to create videos.")
+        print("Install it with: pip install opencv-python")
+        return None
+    except Exception as e:
+        print(f"Error creating video: {str(e)}")
+        return None

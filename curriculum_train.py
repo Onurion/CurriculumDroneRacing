@@ -26,7 +26,8 @@ w_distance= 0.52
 w_distance_change= 1.51
 w_deviation= 0.17
 w_inactivity= 0.20
-reward_type= 1
+w_collision_penalty = 0.2
+reward_type= 3
 observation_type= 1
 is_buffer_obs= False
 buffer_size= 5
@@ -34,10 +35,10 @@ algorithm = "ppo"  # Replace with your algorithm name, e.g., "ppo" or "sac".
 max_steps = 2000
 env_class = DroneRaceCurriculumMultiEnv
 date_str = datetime.now().strftime("%d%B_%H%M")
-main_folder = f"{date_str}_curriculum_{n_agents}drones_v3"
+main_folder = f"{date_str}_curriculum_{n_agents}drones_v5"
 env_args = {"n_agents": n_agents, "n_gates": n_gates, "radius":radius, "action_coefficient":action_coefficient, "distance_exp_decay":distance_exp_decay, "w_distance":w_distance,
-            "w_distance_change":w_distance_change, "w_deviation":w_deviation, "w_inactivity":w_inactivity, "reward_type": reward_type, "observation_type": observation_type,
-            "is_buffer_obs": is_buffer_obs, "buffer_size": buffer_size, "max_steps": max_steps}
+            "w_distance_change":w_distance_change, "w_deviation":w_deviation, "w_inactivity":w_inactivity, "w_collision_penalty":w_collision_penalty , "reward_type": reward_type, 
+            "observation_type": observation_type, "is_buffer_obs": is_buffer_obs, "buffer_size": buffer_size, "max_steps": max_steps}
 
 num_envs = 4  # Number of parallel environments
 
@@ -59,7 +60,7 @@ curriculum_stages = [
     },
     {
         "name": "Stage 2 - Intermediate",
-        "timesteps": 5e6,  # Number of timesteps for this stage.
+        "timesteps": 3e6,  # Number of timesteps for this stage.
         "env_params": {
             "minimum_velocity": 3.0,     # Increase minimum speed.
             "action_coefficient": 3.0,
@@ -72,7 +73,7 @@ curriculum_stages = [
     },
     {
         "name": "Stage 3 - Advanced",
-        "timesteps": 1e7,  # Number of timesteps for this stage.
+        "timesteps": 6e6,  # Number of timesteps for this stage.
         "env_params": {
             "minimum_velocity": 5.0,     # Further increase minimum speed.
             "action_coefficient": 4.0,
@@ -85,7 +86,7 @@ curriculum_stages = [
     },
     {
         "name": "Stage 4 - Advanced II",
-        "timesteps": 2e7,  # Number of timesteps for this stage.
+        "timesteps": 1e7,  # Number of timesteps for this stage.
         "env_params": {
             "minimum_velocity": 7.0,     # Further increase minimum speed.
             "action_coefficient": 6.0,
@@ -98,7 +99,7 @@ curriculum_stages = [
     },
     {
         "name": "Stage 5 - Advanced III",
-        "timesteps": 5e7,  # Number of timesteps for this stage.
+        "timesteps": 2e7,  # Number of timesteps for this stage.
         "env_params": {
             "minimum_velocity": 10.0,     # Further increase minimum speed.
             "action_coefficient": 7.5,

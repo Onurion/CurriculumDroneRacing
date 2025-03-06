@@ -37,7 +37,8 @@ class DroneRaceCurriculumEnv(gym.Env):
                  drone_collision_margin: float =0.5,
                  gate_passing_tolerance: float = 0.5,
                  enable_takeover:bool=False,
-                 takeover_reward: float =0.0):
+                 takeover_reward: float =0.0,
+                 jitter_range:list = [0.25, 0.75]):
         super(DroneRaceCurriculumEnv, self).__init__()
 
         # Simulation parameters.
@@ -47,6 +48,7 @@ class DroneRaceCurriculumEnv(gym.Env):
         self.gate_size = gate_size  # 1m x 1m gate
         self.gate_passing_tolerance = gate_passing_tolerance
         self.random_init = random_init
+        self.jitter_range = jitter_range
 
         # Curriculum parameters.
         self.action_coefficient = action_coefficient          # Multiplier applied to the raw action.
@@ -236,7 +238,7 @@ class DroneRaceCurriculumEnv(gym.Env):
                     )
 
         offset_distance = np.random.uniform(low=1.5, high=3.0)
-        jitter_range = np.random.uniform(low=0.25, high=0.75)
+        jitter_range = np.random.uniform(low=self.jitter_range[0], high=self.jitter_range[1])
         gate_index = np.random.randint(low=0, high=len(self.gate_positions))
 
         for agent in self.agents:

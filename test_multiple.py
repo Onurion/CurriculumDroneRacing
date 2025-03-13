@@ -6,13 +6,15 @@ from collections import deque
 from stable_baselines3 import PPO
 from envs.drone_race_curriculum_v7 import *
 from envs.drone_race_curriculum_multi_v8 import *
+from envs.drone_race_centralized_v8 import *
 from utils import *
 
-root_dir = "Results_27Feb_2025"
+root_dir = "Results_11March_2025"
 n_eval_episodes = 10
 random_init = False
 terminate_on_collision = True
-env_class = DroneRaceCurriculumMultiEnv
+selfplay = False
+env_class = DroneRaceCentralizedMultiEnv
 
 def read_parameters(filepath):
     """
@@ -143,7 +145,7 @@ def str_to_bool(s):
 if __name__ == "__main__":
     # Set the main folder where your parameters.txt and trained model are stored.
 
-    selfplay = True
+    
 
     verbose = False
     save_csv = True
@@ -221,6 +223,7 @@ if __name__ == "__main__":
 
             # Wrap the environment
             env = SelfPlayWrapper(env, dummy_opponent_policies)
+        
 
         # Load the model
         model_path = os.path.join(folder_path, "best_model", "best_model.zip")

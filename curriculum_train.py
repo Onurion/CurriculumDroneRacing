@@ -244,7 +244,7 @@ def train():
         vec_train_env, vec_frozen_env, eval_env = reinitialize_envs(current_env_args, main_folder_stage, num_envs)
 
         write_env_parameters(main_folder_stage, current_env_args, stage=stage_name, algorithm=algorithm,
-                            total_timesteps=total_timesteps, eval_freq=eval_freq,
+                            total_timesteps=stage_timesteps, eval_freq=eval_freq,
                             eval_episodes=eval_episodes,win_rate_threshold=win_rate_threshold)
 
         # Initialize the training model using the vectorized training environment.

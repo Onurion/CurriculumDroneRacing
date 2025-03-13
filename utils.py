@@ -9,6 +9,9 @@ from stable_baselines3.common.vec_env import VecEnv, sync_envs_normalization
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, VecMonitor, is_vecenv_wrapped
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common import type_aliases
+from collections import defaultdict
+import pickle
+
 
 # ----------------------------------------
 # SelfPlayWrapper: Present training agent's perspective (drone0)
@@ -542,7 +545,7 @@ class CustomEvalCallback(EvalCallback):
 
 
 def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=False, save_csv=False, 
-                              main_folder="", visualize=False, save_path=None, create_video=False):
+                              main_folder="", visualize=False, visualization_folder=None, create_video=False):
     """
     Evaluate a given model in the provided environment with added visualization capability.
     Returns a Pandas DataFrame with metrics aggregated over episodes.
@@ -563,6 +566,7 @@ def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=
     avg_speed_list = []
     targets_reached_list = []
     collisions_list = []
+    drone_positions = []       
 
     # Get base environment and agents
     base_env = get_base_env_with_agents(env)
@@ -571,8 +575,8 @@ def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=
     agents = base_env.agents
     
     # Create visualization directory if needed
-    if visualize and save_path:
-        os.makedirs(save_path, exist_ok=True)
+    if visualize and visualization_folder:
+        os.makedirs(visualization_folder, exist_ok=True)
     
     # Set up visualization colors
     drone_colors = plt.cm.tab10(np.linspace(0, 1, 10))
@@ -592,9 +596,9 @@ def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=
         gate_indices_history = []
         collision_history = []
         
-        for agent in agents:
-            speeds[agent] = []
-            targets_reached[agent] = 0.0
+        speeds = defaultdict(list)  # Automatically initializes lists
+        targets_reached = defaultdict(float)  # Automatically initializes to 0.0
+        drone_positions.append(defaultdict(list))  # Cleaner initialization
 
         # Run one episode.
         while not done and steps < max_steps:  # Add a step limit to prevent infinite loops
@@ -613,6 +617,7 @@ def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=
                 state = base_env.get_state(agent)
                 speeds[agent].append(np.linalg.norm(state[3:6]))
                 targets_reached[agent] = base_env.vehicles[agent]["progress"]
+                drone_positions[episode][agent].append(state[0:3])
                 
                 # Extract position and velocity for visualization
                 pos = state[0:3]
@@ -635,7 +640,7 @@ def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=
                 collision_history.append((steps, step_collisions))
             
             # Visualize each step if requested
-            if visualize and (steps % 2 == 0 or done) and save_path:  # Save every other step
+            if visualize and (steps % 2 == 0 or done) and visualization_folder:  # Save every other step
                 try:
                     # Close any existing figures to prevent memory leaks
                     plt.close('all')
@@ -653,7 +658,7 @@ def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=
                         safety_radius=base_env.env.drone_collision_margin
                     )
                     
-                    plt.savefig(f"{save_path}/step_{steps:03d}.png", dpi=80)
+                    plt.savefig(f"{visualization_folder}/step_{steps:03d}.png", dpi=80)
                     plt.close(fig)
                 except Exception as e:
                     print(f"Visualization error: {e}")
@@ -682,15 +687,15 @@ def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=
         })
         
         # Create video from frames if requested
-        if visualize and create_video and save_path:
+        if visualize and create_video and visualization_folder:
             try:
-                video_path = f"{save_path}/episode_{episode}_video.mp4"
-                create_video_from_frames(save_path, video_path)
+                video_path = f"{visualization_folder}/episode_{episode}_video.mp4"
+                create_video_from_frames(visualization_folder, video_path)
                 
                 # Clear frames to prepare for next episode
                 if episode < n_episodes - 1:
                     import glob
-                    for frame_file in glob.glob(f"{save_path}/step_*.png"):
+                    for frame_file in glob.glob(f"{visualization_folder}/step_*.png"):
                         os.remove(frame_file)
             except Exception as e:
                 print(f"Video creation error: {e}")
@@ -707,10 +712,15 @@ def evaluate_model_with_visual(model, env, n_episodes=5, max_steps=500, verbose=
     print(f"\nEvaluation results: Mean Reward={mean_reward:.2f}, Mean Speed={mean_speed:.2f}/±{std_speed:.2f}, "
           f"Mean Targets Reached={mean_targets_reached:.2f}/±{std_targets_reached:.2f} Mean Collisions={mean_collisions:.2f}/±{std_collisions:.2f}")
 
+    with open(os.path.join(main_folder, "drone_positions.pkl"), "wb") as f:
+        pickle.dump(drone_positions, f)
+
     if save_csv:
         stats_df = pd.DataFrame(episode_stats)
         results_csv = os.path.join(main_folder, "evaluation_results.csv")
         stats_df.to_csv(results_csv, index=False)
+
+         
 
     return targets_reached_list, avg_speed_list, total_reward_list, collisions_list
 

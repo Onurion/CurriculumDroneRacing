@@ -35,13 +35,14 @@ algorithm = "ppo"  # Replace with your algorithm name, e.g., "ppo" or "sac".
 max_steps = 2000
 env_class =  DroneRaceCentralizedMultiEnv
 date_str = datetime.now().strftime("%d%B_%H%M")
-main_folder = f"{date_str}_centralized_{n_agents}drones_v3"
+folder = f"{date_str}_centralized_{n_agents}drones_v3"
 env_args = {"n_agents": n_agents, "n_gates": n_gates, "radius":radius, "action_coefficient":action_coefficient, "distance_exp_decay":distance_exp_decay, "w_distance":w_distance,
             "w_distance_change":w_distance_change, "w_deviation":w_deviation, "w_inactivity":w_inactivity, "w_collision_penalty":w_collision_penalty , "reward_type": reward_type, 
             "observation_type": observation_type, "is_buffer_obs": is_buffer_obs, "buffer_size": buffer_size, "max_steps": max_steps}
 
 num_envs = 4  # Number of parallel environments
 level = 0
+N_iteration = 3
 
 curriculum_stages = [
     {
@@ -136,70 +137,76 @@ def reinitialize_envs(env_args, folder, num_envs):
 
     return vec_train_env, eval_env
 
+def train(main_folder):
+    stage = curriculum_stages[level]  # Stages 4 and 5, assuming 0-indexed stages.
+    stage_number = level + 1  # stage 4 for j = 0, stage 5 for j = 1
+    main_folder_stage = main_folder + f"_stage_{stage_number}"
+    os.makedirs(main_folder_stage, exist_ok=True)
+    stage_name = stage.get("name", f"stage_{stage_number}")
+    new_params = stage.get("env_params", {})
+    # Get the timesteps for this stage, or default if not specified.
+    stage_timesteps = stage.get("timesteps", total_timesteps)
+
+    current_env_args = dict(env_args)  # Make a copy of your initial parameters.
+
+    print(f"\n=== Starting Centralized Training for Stage: {stage_name} ===")
+
+    # Update the env_args dictionary with new curriculum parameters.
+    current_env_args.update(new_params)
+
+    print ("Current env args: ", current_env_args)
+    vec_train_env, eval_env = reinitialize_envs(current_env_args, main_folder_stage, num_envs)
+
+    # Create vectorized environments for training and frozen model.
+
+    write_env_parameters(main_folder_stage, current_env_args, stage=stage_name, algorithm=algorithm,
+                        total_timesteps=stage_timesteps, eval_freq=eval_freq,
+                        eval_episodes=eval_episodes,win_rate_threshold=win_rate_threshold)
+
+    # =============================================================================
+    # Initialize the Training Model
+    # =============================================================================
+    if algorithm == "ppo":
+        model = PPO("MlpPolicy",
+                    vec_train_env,
+                    tensorboard_log=os.path.join(main_folder_stage, "tensorboard/"),
+                    device="cpu",
+                    verbose=1)
+    elif algorithm == "sac":
+        model = SAC("MlpPolicy",
+                    vec_train_env,
+                    tensorboard_log=os.path.join(main_folder_stage, "tensorboard/"),
+                    device="cpu",
+                    verbose=1)
+
+    # =============================================================================
+    # Create Callbacks:
+    #
+    # 1. EvalCallback: Built into SB3 to save the best model based on the scalar reward.
+    #
+    # (Note: The custom frozen model/self-play callback from your previous file is removed,
+    #  because in a centralized setting the agent controls both drones.)
+    # =============================================================================
+    eval_callback = EvalCallback(
+        eval_env,
+        best_model_save_path=os.path.join(main_folder_stage, "best_model/"),
+        log_path=os.path.join(main_folder_stage, "logs"),
+        eval_freq=eval_freq,
+        n_eval_episodes=eval_episodes,
+        deterministic=True,
+        render=False,
+    )
+
+    callback_list = CallbackList([eval_callback])
+
+    # =============================================================================
+    # Start Training
+    # =============================================================================
+    model.learn(total_timesteps=stage_timesteps, callback=callback_list)
 
 
-stage = curriculum_stages[level]  # Stages 4 and 5, assuming 0-indexed stages.
-stage_number = level + 1  # stage 4 for j = 0, stage 5 for j = 1
-main_folder_stage = main_folder + f"_stage_{stage_number}"
-os.makedirs(main_folder_stage, exist_ok=True)
-stage_name = stage.get("name", f"stage_{stage_number}")
-new_params = stage.get("env_params", {})
-# Get the timesteps for this stage, or default if not specified.
-stage_timesteps = stage.get("timesteps", total_timesteps)
+if __name__ == "__main__":
 
-current_env_args = dict(env_args)  # Make a copy of your initial parameters.
-
-print(f"\n=== Starting Centralized Training for Stage: {stage_name} ===")
-
-# Update the env_args dictionary with new curriculum parameters.
-current_env_args.update(new_params)
-
-print ("Current env args: ", current_env_args)
-vec_train_env, eval_env = reinitialize_envs(current_env_args, main_folder_stage, num_envs)
-
-# Create vectorized environments for training and frozen model.
-
-write_env_parameters(main_folder_stage, current_env_args, stage=stage_name, algorithm=algorithm,
-                    total_timesteps=stage_timesteps, eval_freq=eval_freq,
-                    eval_episodes=eval_episodes,win_rate_threshold=win_rate_threshold)
-
-# =============================================================================
-# Initialize the Training Model
-# =============================================================================
-if algorithm == "ppo":
-    model = PPO("MlpPolicy",
-                vec_train_env,
-                tensorboard_log=os.path.join(main_folder_stage, "tensorboard/"),
-                device="cpu",
-                verbose=1)
-elif algorithm == "sac":
-    model = SAC("MlpPolicy",
-                vec_train_env,
-                tensorboard_log=os.path.join(main_folder_stage, "tensorboard/"),
-                device="cpu",
-                verbose=1)
-
-# =============================================================================
-# Create Callbacks:
-#
-# 1. EvalCallback: Built into SB3 to save the best model based on the scalar reward.
-#
-# (Note: The custom frozen model/self-play callback from your previous file is removed,
-#  because in a centralized setting the agent controls both drones.)
-# =============================================================================
-eval_callback = EvalCallback(
-    eval_env,
-    best_model_save_path=os.path.join(main_folder_stage, "best_model/"),
-    log_path=os.path.join(main_folder_stage, "logs"),
-    eval_freq=eval_freq,
-    n_eval_episodes=eval_episodes,
-    deterministic=True,
-    render=False,
-)
-
-callback_list = CallbackList([eval_callback])
-
-# =============================================================================
-# Start Training
-# =============================================================================
-model.learn(total_timesteps=stage_timesteps, callback=callback_list)
+    for i in range(N_iteration):
+        main_folder = f"{folder}_iter_{i}"
+        train(main_folder=main_folder)

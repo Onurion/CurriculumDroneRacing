@@ -27,7 +27,7 @@ w_distance_change= 1.51
 w_deviation= 0.17
 w_inactivity= 0.20
 w_collision_penalty = 0.2
-reward_type= 3
+reward_type= 1
 observation_type= 1
 is_buffer_obs= False
 buffer_size= 5
@@ -35,12 +35,13 @@ algorithm = "ppo"  # Replace with your algorithm name, e.g., "ppo" or "sac".
 max_steps = 2000
 env_class = DroneRaceCurriculumMultiEnv
 date_str = datetime.now().strftime("%d%B_%H%M")
-main_folder = f"{date_str}_curriculum_{n_agents}drones_v5"
+folder = f"{date_str}_curriculum_{n_agents}drones_v3"
 env_args = {"n_agents": n_agents, "n_gates": n_gates, "radius":radius, "action_coefficient":action_coefficient, "distance_exp_decay":distance_exp_decay, "w_distance":w_distance,
             "w_distance_change":w_distance_change, "w_deviation":w_deviation, "w_inactivity":w_inactivity, "w_collision_penalty":w_collision_penalty , "reward_type": reward_type, 
             "observation_type": observation_type, "is_buffer_obs": is_buffer_obs, "buffer_size": buffer_size, "max_steps": max_steps}
 
 num_envs = 4  # Number of parallel environments
+N_iteration = 3
 
 
 
@@ -218,7 +219,7 @@ def reinitialize_envs(env_args, main_folder, num_envs):
     return vec_train_env, vec_frozen_env, eval_env
 
 
-def train():
+def train(main_folder):
     level_start = 0
     previous_main_folder = None #"Results_21Feb_2025/21February_1412_curriculum_2drones_v3_stage_3"
 
@@ -336,21 +337,12 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
+
+    for i in range(N_iteration):
+        main_folder = f"{folder}_iter_{i}"
+        train(main_folder=main_folder)
 
 
-# Create a separate evaluation environment (non-vectorized)
-# eval_env = make_env()  # Using the same make_env() as before
-# obs = eval_env.reset()
-# for episode in range(3):
-#     done = False
-#     print(f"\n--- Evaluation Episode: {episode} ---")
-#     while not done:
-#         action, _ = model.predict(obs, deterministic=True)
-#         obs, reward, done, truncated, info = eval_env.step(action)
-#         print(f"Reward: {reward}")
-#         eval_env.render()
-#     obs = eval_env.reset()
 
 
 

@@ -116,7 +116,7 @@ class DroneRaceCurriculumMultiEnv(gym.Env):
             else:
                 z = 3 # np.random.uniform(1.5, 2.5)  # low altitude range
             center = np.array([radius * np.cos(theta), radius * np.sin(theta), z], dtype=np.float32)
-            gate = {"center": center, "yaw": theta}
+            gate = {"center": center, "yaw": theta + np.pi/2}
             self.gates.append(gate)
         self.gate_positions = np.array([gate["center"] for gate in self.gates])
         self.gate_yaws = np.array([gate["yaw"] for gate in self.gates])

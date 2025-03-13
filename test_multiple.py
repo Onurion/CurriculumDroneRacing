@@ -4,17 +4,16 @@ import numpy as np
 import pandas as pd
 from collections import deque
 from stable_baselines3 import PPO
-from envs.drone_race_curriculum_v7 import *
 from envs.drone_race_curriculum_multi_v8 import *
 from envs.drone_race_centralized_v8 import *
 from utils import *
 
-root_dir = "Results_11March_2025"
+root_dir = "Results_27Feb_2025"
 n_eval_episodes = 10
 random_init = False
 terminate_on_collision = True
-selfplay = False
-env_class = DroneRaceCentralizedMultiEnv
+selfplay = True
+env_class = DroneRaceCurriculumMultiEnv
 
 def read_parameters(filepath):
     """
@@ -280,7 +279,7 @@ if __name__ == "__main__":
         print(f"{folder}: {metrics}")
 
     # Optionally, store the full sorted results in a global summary file.
-    global_summary_path = os.path.join(root_dir, "global_results_summary.txt")
+    global_summary_path = os.path.join(root_dir, "global_results_summary_v2.txt")
     with open(global_summary_path, "a") as f:
         for folder, metrics in sorted_results:
             f.write(f"{folder}: {metrics}\n")

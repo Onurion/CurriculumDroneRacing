@@ -3,10 +3,10 @@ from datetime import datetime
 import numpy as np
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.vec_env import DummyVecEnv
-from envs.drone_race_curriculum_multi_v8 import DroneRaceCurriculumMultiEnv
+from envs.drone_race_curriculum_multi import DroneRaceCurriculumMultiEnv
 from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.monitor import Monitor
-from test_multiple import evaluate_model
+from test import evaluate_model
 from utils import *
 
 
@@ -18,7 +18,7 @@ eval_freq = 4000                  # Evaluation frequency (in timesteps).
 eval_episodes = 10                # Number of episodes to use in each evaluation.
 win_rate_threshold = 0.6          # Win rate to trigger frozen model update.
 n_gates = 5                       # Number of gates in the environment.
-n_agents = 3
+n_agents = 2
 radius = 10.0
 action_coefficient= 1.92
 distance_exp_decay= 2.00
@@ -31,19 +31,19 @@ reward_type= 1
 observation_type= 1
 is_buffer_obs= False
 buffer_size= 5
+gate_size = 2.0
 algorithm = "ppo"  # Replace with your algorithm name, e.g., "ppo" or "sac".
 max_steps = 2000
+track_type = "infinity"
 env_class = DroneRaceCurriculumMultiEnv
 date_str = datetime.now().strftime("%d%B_%H%M")
-folder = f"{date_str}_curriculum_{n_agents}drones_v3"
+folder = f"{date_str}_nocurriculum_{n_agents}drones_v3_{track_type}"
 env_args = {"n_agents": n_agents, "n_gates": n_gates, "radius":radius, "action_coefficient":action_coefficient, "distance_exp_decay":distance_exp_decay, "w_distance":w_distance,
             "w_distance_change":w_distance_change, "w_deviation":w_deviation, "w_inactivity":w_inactivity, "w_collision_penalty":w_collision_penalty , "reward_type": reward_type, 
-            "observation_type": observation_type, "is_buffer_obs": is_buffer_obs, "buffer_size": buffer_size, "max_steps": max_steps}
+            "observation_type": observation_type, "is_buffer_obs": is_buffer_obs, "buffer_size": buffer_size, "max_steps": max_steps, "gate_size": gate_size, "track_type":track_type}
 
 num_envs = 4  # Number of parallel environments
-N_iteration = 3
-
-
+N_iteration = 1
 
 curriculum_stages = [
     {
@@ -52,11 +52,11 @@ curriculum_stages = [
         "env_params": {
             "minimum_velocity": 1.0,     # Low required speed.
             "action_coefficient": 2.0,
-            "enable_collision": False,  # Collisions are not penalized at first.
+            "enable_collision": False,   # No collision penalties initially
             "terminate_on_collision": False,
             "collision_penalty": 0.0,
-            "gate_passing_tolerance": 0.5,
-            "takeover_reward": 0.0,
+            "gate_passing_tolerance": 0.5,    # Generous gate passing tolerance
+            "overtake_reward": 0.0
         },
     },
     {
@@ -65,11 +65,11 @@ curriculum_stages = [
         "env_params": {
             "minimum_velocity": 3.0,     # Increase minimum speed.
             "action_coefficient": 3.0,
-            "enable_collision": True,  # Begin penalizing collisions.
+            "enable_collision": True,    # Begin penalizing drone-drone collisions
             "terminate_on_collision": False,
             "collision_penalty": 0.25,
-            "gate_passing_tolerance": 0.3,
-            "takeover_reward": 0.1,
+            "gate_passing_tolerance": 0.3,  # Reduced tolerance
+            "overtake_reward": 0.1,
         },
     },
     {
@@ -78,11 +78,11 @@ curriculum_stages = [
         "env_params": {
             "minimum_velocity": 5.0,     # Further increase minimum speed.
             "action_coefficient": 4.0,
-            "enable_collision": True,
-            "terminate_on_collision": False,    # Now terminate episode on collisions.
+            "enable_collision": True,    # Continue with drone-drone collisions
+            "terminate_on_collision": False,
             "collision_penalty": 0.5,
             "gate_passing_tolerance": 0.25,
-            "takeover_reward": 0.2,
+            "overtake_reward": 0.2,
         },
     },
     {
@@ -92,100 +92,33 @@ curriculum_stages = [
             "minimum_velocity": 7.0,     # Further increase minimum speed.
             "action_coefficient": 6.0,
             "enable_collision": True,
-            "terminate_on_collision": False,    # Now terminate episode on collisions.
+            "terminate_on_collision": True,  # Now terminate on collisions (important change!)
             "collision_penalty": 0.6,
             "gate_passing_tolerance": 0.2,
-            "takeover_reward": 0.2,
+            "overtake_reward": 0.2
         },
     },
     {
         "name": "Stage 5 - Advanced III",
         "timesteps": 2e7,  # Number of timesteps for this stage.
         "env_params": {
-            "minimum_velocity": 10.0,     # Further increase minimum speed.
+            "minimum_velocity": 10.0,    # Further increase minimum speed.
             "action_coefficient": 7.5,
             "enable_collision": True,
-            "terminate_on_collision": False,    # Now terminate episode on collisions.
+            "terminate_on_collision": True,
             "collision_penalty": 0.7,
             "gate_passing_tolerance": 0.2,
-            "takeover_reward": 0.2,
+            "overtake_reward": 0.2
         },
     },
 ]
 
 
-# curriculum_stages = [
-#     {
-#         "name": "Stage 1 - Basics",
-#         "timesteps": 1e6,  # Number of timesteps for this stage.
-#         "env_params": {
-#             "minimum_velocity": 1.0,     # Low required speed.
-#             "action_coefficient": 2.0,
-#             "enable_collision": False,  # Collisions are not penalized at first.
-#             "terminate_on_collision": False,
-#             "collision_penalty": 0.0,
-#             "gate_passing_tolerance": 0.5,
-#             "takeover_reward": 0.0,
-#         },
-#     },
-#     {
-#         "name": "Stage 2 - Intermediate",
-#         "timesteps": 3e6,  # Number of timesteps for this stage.
-#         "env_params": {
-#             "minimum_velocity": 3.0,     # Increase minimum speed.
-#             "action_coefficient": 3.0,
-#             "enable_collision": True,  # Begin penalizing collisions.
-#             "terminate_on_collision": False,
-#             "collision_penalty": 0.25,
-#             "gate_passing_tolerance": 0.3,
-#             "takeover_reward": 0.1,
-#         },
-#     },
-#     {
-#         "name": "Stage 3 - Advanced",
-#         "timesteps": 6e6,  # Number of timesteps for this stage.
-#         "env_params": {
-#             "minimum_velocity": 5.0,     # Further increase minimum speed.
-#             "action_coefficient": 5.0,
-#             "enable_collision": True,
-#             "terminate_on_collision": False,    # Now terminate episode on collisions.
-#             "collision_penalty": 0.5,
-#             "gate_passing_tolerance": 0.25,
-#             "takeover_reward": 0.2,
-#         },
-#     },
-#     {
-#         "name": "Stage 4 - Advanced II",
-#         "timesteps": 1e7,  # Number of timesteps for this stage.
-#         "env_params": {
-#             "minimum_velocity": 7.0,     # Further increase minimum speed.
-#             "action_coefficient": 7.5,
-#             "enable_collision": True,
-#             "terminate_on_collision": False,    # Now terminate episode on collisions.
-#             "collision_penalty": 0.6,
-#             "gate_passing_tolerance": 0.2,
-#             "takeover_reward": 0.2,
-#         },
-#     },
-#     {
-#         "name": "Stage 5 - Advanced III",
-#         "timesteps": 3e7,  # Number of timesteps for this stage.
-#         "env_params": {
-#             "minimum_velocity": 8.0,     # Further increase minimum speed.
-#             "action_coefficient": 10.0,
-#             "enable_collision": True,
-#             "terminate_on_collision": False,    # Now terminate episode on collisions.
-#             "collision_penalty": 0.8,
-#             "gate_passing_tolerance": 0.2,
-#             "takeover_reward": 0.2,
-#         },
-#     },
-# ]
-
 
 def reinitialize_envs(env_args, main_folder, num_envs):
 
     def make_env():
+        env_args["evaluation_mode"] = False
         base_env = env_class(**env_args)
         # dummy_opponent_policy = lambda obs: np.zeros_like(base_env.action_space["drone1"].sample())
         # Create dummy policies for all opponents
@@ -202,7 +135,9 @@ def reinitialize_envs(env_args, main_folder, num_envs):
     vec_frozen_env = DummyVecEnv([make_env for _ in range(num_envs)])
 
     def make_eval_env():
-        env_args["random_init"] = False
+        # env_args["random_init"] = False
+        env_args["evaluation_mode"] = True
+        
         base_env = env_class(**env_args)
         # dummy_opponent_policy = lambda obs: np.zeros_like(base_env.action_space["drone1"].sample())
         dummy_opponent_policies = {
@@ -223,7 +158,7 @@ def train(main_folder):
     level_start = 0
     previous_main_folder = None #"Results_21Feb_2025/21February_1412_curriculum_2drones_v3_stage_3"
 
-    new_stages = curriculum_stages[level_start:]  # Stages 4 and 5, assuming 0-indexed stages.
+    new_stages = curriculum_stages[level_start:]  
     for i, stage in enumerate(new_stages):
         stage_number = i + level_start + 1  # stage 4 for j = 0, stage 5 for j = 1
         main_folder_stage = main_folder + f"_stage_{stage_number}"
@@ -239,10 +174,13 @@ def train(main_folder):
 
         # Update the env_args dictionary with new curriculum parameters.
         current_env_args.update(new_params)
-
-        print ("Current env args: ", current_env_args)
+        
         # Create vectorized environments for training and frozen model.
         vec_train_env, vec_frozen_env, eval_env = reinitialize_envs(current_env_args, main_folder_stage, num_envs)
+
+        current_env_args["env_name"] = env_class.__name__
+
+        print ("Current env args: ", current_env_args)
 
         write_env_parameters(main_folder_stage, current_env_args, stage=stage_name, algorithm=algorithm,
                             total_timesteps=stage_timesteps, eval_freq=eval_freq,
@@ -333,8 +271,6 @@ def train(main_folder):
         # Use these functions in your code
         print_results(main_folder_stage, stage_number, score, mean_targets_reached, std_targets_reached,
                         mean_speed, std_speed, mean_collisions, std_collisions)
-
-
 
 if __name__ == "__main__":
 

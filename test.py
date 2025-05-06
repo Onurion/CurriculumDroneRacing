@@ -1,176 +1,313 @@
-from utils import *
-from envs.drone_race_curriculum_multi_v8 import *
-from envs.drone_race_curriculum_v7 import *
-from stable_baselines3 import PPO, SAC
+import os
 import time
 import numpy as np
-import pickle
-import os
-import matplotlib
-matplotlib.use('Agg')  # Set non-interactive backend before importing pyplot
-import matplotlib.pyplot as plt
-from test_multiple import *
+import pandas as pd
+from collections import deque
+from stable_baselines3 import PPO
+from envs.drone_race_curriculum_multi import *
 from utils import *
 
-
-main_folder = "Results_26Feb_2025/26February_1146_curriculum_2drones_v3_stage_5"
-selfplay = True
+root_dir = "Results_nocurriculum_infinity" 
+n_eval_episodes = 5
 random_init = False
-env_class = DroneRaceCurriculumEnv
+evaluation_mode = True
+terminate_on_collision = True
+selfplay = True
+env_class = DroneRaceCurriculumMultiEnv
 
-algorithm = "ppo"  # Replace with your algorithm name, e.g., "ppo" or "sac".
-# env_args = {"n_gates": n_gates, "radius":radius, "action_coeff":action_coeff, "distance_exp_decay":distance_exp_decay, "w_distance":w_distance,
-#             "w_distance_change":w_distance_change, "w_deviation":w_deviation, "w_inactivity":w_inactivity, "reward_type": reward_type}
+def read_parameters(filepath):
+    """
+    Read parameters from a text file and return a dict.
+    This function reads each line until it reaches the line that starts with 'stage='.
+    """
+    params = {}
+    with open(filepath, 'r') as f:
+        for line in f:
+            line = line.strip()
+            # Skip blank lines or header lines
+            if not line or line.startswith("Training parameters:"):
+                continue
+            if '=' in line:
+                key, value = line.split('=', 1)
+                key = key.strip()
+                # If we've reached the stage info, stop reading further.
+                if key.lower() == 'env_name':
+                    break
 
-visualization = False
-verbose = False
-save_csv = True
-n_eval_episodes = 10
-n_steps = 1000
-jitter_range = [1.0, 2.0]
+                value = value.strip()
+                params[key] = value
+                
+    return params
 
-def evaluate_agent(env, model, n_steps = 1000):
-    drone_positions = {}
 
-    for i in range(n_eval_episodes):
-        print("\nEvaluating agent episode: ", i)
-        for agent in env.agents:
-            drone_positions[agent] = {i: []}
 
+def evaluate_model(model, env, n_episodes=10, verbose=False, save_csv=False, main_folder=""):
+    """
+    Evaluate a given model in the provided environment.
+    Returns a Pandas DataFrame with metrics aggregated over episodes.
+    """
+    episode_stats = []  # To store metrics per episode
+    total_reward_list = []
+    avg_speed_list = []
+    targets_reached_list = []
+    collisions_list = []
+    collision_arg = "collision"
+
+    base_env = get_base_env_with_agents(env)
+    if not hasattr(base_env, "agents"):
+        raise AttributeError("The base environment does not have an 'agents' attribute.")
+
+    agents = base_env.agents
+
+    positions_list = []
+
+    for episode in range(n_episodes):
         obs, info = env.reset()
-        for _ in range(n_steps):
+        done = False
+        total_reward = 0.0
+        steps = 0
+        speeds = {}          # To store each agent's speeds over steps
+        targets_reached = {}  # To store the final progress reported for each agent
+        positions = {}
+
+        for agent in agents:
+            positions[agent] = []
+            speeds[agent] = []
+            targets_reached[agent] = 0.0
+
+        # Run one episode.
+        while not done:
             action, _ = model.predict(obs, deterministic=True)
             obs, reward, done, truncated, info = env.step(action)
-            drone_positions[agent][i].append(env.vehicles[agent]["drone"].state[0:3])
-            env.render()
-            # print (f"Reward: {reward:.3f}")
-            # time.sleep(0.3)
-            if done:
-                print("Episode terminated!")
-                break
-        env.close()
-    return drone_positions
+            total_reward += reward
+            steps += 1
 
-#Evaluation results: Mean Reward=218.07, Mean Speed=0.49, Mean Targets Reached=33.10
-#Evaluation results: Mean Reward=835.74, Mean Speed=0.42, Mean Targets Reached=38.15
+            for agent in agents:
+                state = base_env.get_state(agent)
+                positions[agent].append(state[:3])
+                speeds[agent].append(np.linalg.norm(state[3:6]))
+                targets_reached[agent] = base_env.vehicles[agent]["progress"]
 
-# 1000 episode evaluation
-#Evaluation results for 17February_1654_selfplay_2drones: Mean Reward=1557.60, Mean Speed=2.00/±0.23, Mean Targets Reached=28.20/±4.70
-#Evaluation results for 17February_1701_selfplay_2drones: Mean Reward=646.64, Mean Speed=1.74/±0.31, Mean Targets Reached=25.64/±5.93
+        total_reward_list.append(total_reward)
+        positions_list.append(positions)
+        if verbose:
+            print(f"Episode {episode}: Total Reward={total_reward:.2f}, Steps={steps}")
+
+        avg_speed = {}
+        for agent in agents:
+            # Compute the average speed per agent.
+            avg_speed[agent] = np.mean(speeds[agent])
+            if verbose:
+                print(f"Agent: {agent} Targets Reached={targets_reached[agent]}, Avg Speed={avg_speed[agent]:.2f}")
+            avg_speed_list.append(avg_speed[agent])
+            targets_reached_list.append(targets_reached[agent])
+            collisions_list.append(info[agent][collision_arg])
+
+
+        episode_stats.append({
+            "episode": episode,
+            "total_reward": total_reward,
+            "steps": steps,
+            "targets_reached": targets_reached,
+            "avg_speed": avg_speed,
+            "collisions:": collisions_list
+        })
+
+    mean_reward = np.mean(total_reward_list)
+    mean_velocity = np.mean(avg_speed_list)
+    std_velocity = np.std(avg_speed_list)
+    mean_collisions = np.mean(collisions_list)
+    std_collisions = np.std(collisions_list)
+
+    total_distance = 0
+    gate_positions = env.env.gate_positions
+    for i in range(len(gate_positions)):
+        current_gate = gate_positions[i]
+        next_gate = gate_positions[(i + 1) % len(gate_positions)]  # Wrap around for complete lap
+        segment_distance = np.linalg.norm(next_gate - current_gate)
+        total_distance += segment_distance
+    
+    # Calculate mean lap time
+    mean_lap_time = total_distance / mean_velocity
+    
+    # For standard deviation of lap time, we use error propagation:
+    # If T = D/V, then σ_T/T = σ_V/V (for constant distance)
+    relative_std_velocity = std_velocity / mean_velocity
+    std_lap_time = mean_lap_time * relative_std_velocity
+
+    print(f"\nEvaluation results: Mean Reward={mean_reward:.2f}, Mean Speed={mean_velocity:.2f}/±{std_velocity:.2f}, "
+          f"Mean Lap Time={mean_lap_time:.2f}/±{std_lap_time:.2f} Mean Collisions={mean_collisions:.2f}/±{std_collisions:.2f}")
+
+    if save_csv:
+        stats_df = pd.DataFrame(episode_stats)
+        results_csv = os.path.join(main_folder, "evaluation_results.csv")
+        stats_df.to_csv(results_csv, index=False)
+
+        # pickle the positions list
+        with open(os.path.join(main_folder, "positions_list.pkl"), "wb") as f:
+            pickle.dump(positions_list, f)
+
+
+    return targets_reached_list, avg_speed_list, total_reward_list, collisions_list
+
+
+
+def str_to_bool(s):
+    return s.strip().lower() in ["true", "1", "yes"]
+
 
 if __name__ == "__main__":
+    # Set the main folder where your parameters.txt and trained model are stored.
 
-    param_file = os.path.join(main_folder, "parameters.txt")
-    if not os.path.exists(param_file):
-        print("  No parameters.txt found; skipping folder.")
-        exit()
+    
 
-    # Read environment parameters from the file.
-    params = read_parameters(param_file)
+    verbose = False
+    save_csv = True
 
-    if "n_agents" in params:
-        n_agents = int(params["n_agents"])
-    else:
-        n_agents = 2
+    results_summary = {}
 
-    # Convert and map parameters. For booleans do an explicit conversion.
+    # Iterate over each folder in root_dir.
+    for folder in os.listdir(root_dir):
 
-    is_buffer_obs = str_to_bool(params.get("is_buffer_obs", "False"))
-    buffer_size = int(params.get("buffer_size", 10))
+        # if not folder.startswith("19March"):
+        #     continue  # Skip folders that don't start with "19_March"
 
-    # Parse and convert parameters as needed.
-    # Note: The file uses "action_coefficient" but your environment expects "action_coeff".
-    env_args = {
-        "n_agents": n_agents,
-        "n_gates": int(params["n_gates"]),
-        "radius": float(params["radius"]),
-        "action_coefficient": float(params["action_coefficient"]),
-        "distance_exp_decay": float(params["distance_exp_decay"]),
-        "w_distance": float(params["w_distance"]),
-        "w_distance_change": float(params["w_distance_change"]),
-        "w_deviation": float(params["w_deviation"]),
-        "w_inactivity": float(params["w_inactivity"]),
-        "reward_type": int(params["reward_type"]),
-        "observation_type": int(params["observation_type"]),
-        "minimum_velocity": float(params["minimum_velocity"]),
-        "enable_collision": bool(params["enable_collision"]),
-        "terminate_on_collision": terminate_on_collision,
-        "collision_penalty": float(params["collision_penalty"]),
-        "gate_passing_tolerance": 0.5,  #float(params["gate_passing_tolerance"]),
-        "drone_collision_margin": 0.25,  
-        "takeover_reward": float(params["takeover_reward"]),
-        "is_buffer_obs": is_buffer_obs,
-        "buffer_size": buffer_size,
-        "random_init": random_init,
-        "jitter_range": jitter_range
-    }
-    if verbose:
-        print("Environment parameters:", env_args)
+        folder_path = os.path.join(root_dir, folder)
+        if not os.path.isdir(folder_path):
+            continue  # skip non-folders
+
+        print(f"\nProcessing folder: {folder_path}")
+        # Path to parameters.txt in the folder.
+        param_file = os.path.join(folder_path, "parameters.txt")
+        if not os.path.exists(param_file):
+            print("  No parameters.txt found; skipping folder.")
+            continue
+
+        # Read environment parameters from the file.
+        env_args = parse_env_parameters_from_file(param_file)
+
+        # Convert and map parameters. For booleans do an explicit conversion.
+
+        if "n_agents" in env_args:
+            n_agents = int(env_args["n_agents"])
+        else:
+            n_agents = 2
+
+        track_type = env_args.get("track_type", "circle")
+        gate_size = float(env_args.get("gate_size", 2.0))
 
 
-    env = env_class(**env_args)
-    if selfplay:
-        original_action_spaces = env.action_space  # This is still a Dict
+        # Parse and convert parameters as needed.
+        # Note: The file uses "action_coefficient" but your environment expects "action_coeff".
+        env_args.update({
+            "n_agents": n_agents,
+            "evaluation_mode": evaluation_mode,
+            "terminate_on_collision": terminate_on_collision,
+            "gate_passing_tolerance": 1.0,
+            "drone_collision_margin": 0.25,
+            "gate_size": gate_size,
+            "track_type": track_type,
+            "random_init": random_init
+        })
 
-        # First create dummy policies (these are just placeholders)
-        dummy_opponent_policies = {}
-        for i in range(1, n_agents):
-            agent_id = f"drone{i}"
-            dummy_opponent_policies[agent_id] = lambda obs: np.zeros_like(original_action_spaces[agent_id].sample())
 
-        # Wrap the environment
-        env = SelfPlayWrapper(env, dummy_opponent_policies)
+        if verbose:
+            print("Environment parameters:", env_args)
 
-    # Load the model
-    model_path = os.path.join(main_folder, "best_model", "best_model.zip")
-    model = PPO.load(model_path, device="cpu", env=env)
+        # Create the environment.
+        try:
+            env = env_class(**env_args)
+        except Exception as e:
+            print("  Error creating environment:", e)
+            continue
 
-    if selfplay:
-        # Create frozen model
-        frozen_model = PPO("MlpPolicy", env, device="cpu", verbose=0)
-        frozen_model.set_parameters(model.get_parameters())
-        frozen_opponent_policy = FrozenOpponentPolicy(frozen_model)
+        if selfplay:
+            original_action_spaces = env.action_space  # This is still a Dict
+
+            # First create dummy policies (these are just placeholders)
+            dummy_opponent_policies = {}
+            for i in range(1, n_agents):
+                agent_id = f"drone{i}"
+                dummy_opponent_policies[agent_id] = lambda obs: np.zeros_like(original_action_spaces[agent_id].sample())
+
+            # Wrap the environment
+            env = SelfPlayWrapper(env, dummy_opponent_policies)
         
-        # Set the frozen policy for each opponent
-        for agent_id in env.frozen_opponent_policies.keys():
-            env.frozen_opponent_policies[agent_id] = frozen_opponent_policy
 
-    # For evaluation with visualization
-    targets, speeds, rewards, collisions = evaluate_model_with_visual(
-        model, 
-        env, 
-        n_episodes=n_eval_episodes,
-        max_steps=500,
-        verbose=True,
-        visualize=visualization,
-        main_folder=main_folder,
-        visualization_folder=main_folder + "/visualization",
-        create_video=visualization
-    )
+        # Load the model
+        model_path = os.path.join(folder_path, "best_model", "best_model.zip")
+        model = PPO.load(model_path, device="cpu", env=env)
+
+        if selfplay:
+            # Create frozen model
+            frozen_model = PPO("MlpPolicy", env, device="cpu", verbose=0)
+            frozen_model.set_parameters(model.get_parameters())
+            frozen_opponent_policy = FrozenOpponentPolicy(frozen_model)
+            
+            # Set the frozen policy for each opponent
+            for agent_id in env.frozen_opponent_policies.keys():
+                env.frozen_opponent_policies[agent_id] = frozen_opponent_policy
 
 
-    mean_reward = np.mean(rewards)
-    std_reward = np.mean(rewards)
-    mean_velocity = np.mean(speeds)
-    std_velocity = np.std(speeds)
-    mean_targets_reached = np.mean(targets)
-    std_targets_reached = np.std(targets)
-    mean_collision = np.mean(collisions)
-    std_collision = np.std(collisions)
-
-    print ("Evaluation results for", main_folder)
-    print (f"Mean Reward={mean_reward:.2f}, Mean Speed={mean_velocity:.2f}/{std_velocity:.2f}, Mean Targets Reached={mean_targets_reached:.2f}/{std_targets_reached:.2f}, Mean Collision={mean_collision:.2f}/{std_collision:.2f}")
-
-    results_txt_path = os.path.join(main_folder, "results.txt")
-    with open(results_txt_path, "a") as f:
-        f.write(f"\nmean_targets_reached: {mean_targets_reached:.2f}/±{std_targets_reached:.2f}\n")
-        f.write(f"mean_velocity: {mean_velocity:.2f}/±{std_velocity:.2f}\n")
-        f.write(f"mean_collision: {mean_collision:.2f}/±{std_collision:.2f}\n")
-        f.write(f"mean_reward: {mean_reward:.2f}/±{std_reward:.2f}\n")
-    print("  Saved results.txt.")
+        targets_reached_list, avg_speed_list, \
+        total_reward_list, collisions_list = evaluate_model(model, env, n_episodes=n_eval_episodes,
+                                                              verbose=verbose, save_csv=save_csv,
+                                                              main_folder=folder_path)
 
 
+        mean_reward = np.mean(total_reward_list)
+        mean_velocity = np.mean(avg_speed_list)
+        std_velocity = np.std(avg_speed_list)
+        mean_targets_reached = np.mean(targets_reached_list)
+        std_targets_reached = np.std(targets_reached_list)
+        mean_collision = np.mean(collisions_list)
+        std_collision = np.std(collisions_list)
+
+        total_distance = 0
+        gate_positions = env.env.gate_positions
+        for i in range(len(gate_positions)):
+            current_gate = gate_positions[i]
+            next_gate = gate_positions[(i + 1) % len(gate_positions)]  # Wrap around for complete lap
+            segment_distance = np.linalg.norm(next_gate - current_gate)
+            total_distance += segment_distance
+        
+        # Calculate mean lap time
+        mean_lap_time = total_distance / mean_velocity
+        
+        # For standard deviation of lap time, we use error propagation:
+        # If T = D/V, then σ_T/T = σ_V/V (for constant distance)
+        relative_std_velocity = std_velocity / mean_velocity
+        std_lap_time = mean_lap_time * relative_std_velocity
 
 
+        # Create results.txt in the folder.
+        results_txt_path = os.path.join(folder_path, "results.txt")
+        with open(results_txt_path, "a") as f:
+            f.write(f"mean_lap_time: {mean_lap_time:.2f}/±{std_lap_time:.2f}\n")
+            f.write(f"mean_velocity: {mean_velocity:.2f}/±{std_velocity:.2f}\n")
+            f.write(f"mean_collision: {mean_collision:.2f}/±{std_collision:.2f}\n")
+        print("  Saved results.txt.")
+
+        # Store the results summary in the dictionary.
+        results_summary[folder] = {
+            "mean_lap_time": mean_lap_time,
+            "std_lap_time": std_lap_time,
+            "mean_velocity": mean_velocity,
+            "std_velocity": std_velocity,
+            "mean_collision": mean_collision
+        }
 
 
+    # Sort the folders by mean_lap_time.
+    sorted_results = sorted(results_summary.items(), key=lambda item: item[1]["mean_velocity"], reverse=True)
+
+    print("\nSorted Results (by mean_lap_time, descending):")
+    for folder, metrics in sorted_results:
+        print(f"{folder}: {metrics}")
+
+    # Optionally, store the full sorted results in a global summary file.
+    global_summary_path = os.path.join(root_dir, "global_results_summary.txt")
+    with open(global_summary_path, "a") as f:
+        for folder, metrics in sorted_results:
+            f.write(f"{folder}: {metrics}\n")
+    print(f"Global summary saved in {global_summary_path}")

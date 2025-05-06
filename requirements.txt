@@ -1,0 +1,39 @@
+# Core scientific stack
+numpy==1.26.4
+scipy==1.14.1
+pandas==2.2.2
+matplotlib==3.9.0
+seaborn==0.13.2
+
+# Machine/Deep learning frameworks
+jax==0.4.38
+jaxlib==0.4.38
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+flax==0.10.2
+optax==0.2.4
+
+# RL and optimization
+stable-baselines3==2.5.0a0
+gym==0.26.2
+gymnasium==1.0.0
+optuna==4.1.0
+cvxpy==1.5.3
+sacred==0.8.6
+wandb==0.19.1
+
+# Data handling & utilities
+scikit-learn==1.5.1
+opencv-python==4.10.0.84
+imageio==2.37.0
+plotly==6.0.0
+requests==2.32.3
+
+# Jupyter and notebook support
+jupyterlab==4.2.5
+notebook==7.2.2
+ipykernel==6.29.5
+
+# (optional) experiment tracking, plotting, more RL/ML
+tensorboard==2.17.1

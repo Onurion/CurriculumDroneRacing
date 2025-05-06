@@ -1,0 +1,15 @@
+curriculum_2drones_v12_iter_circle_0_stage_5: {'mean_lap_time': 13.242750391689771, 'std_lap_time': 0.06196396381165863, 'mean_velocity': 4.4513674, 'std_velocity': 0.020828329, 'mean_collision': 0.0}
+curriculum_3drones_v12_iter_circle_0_stage_5: {'mean_lap_time': 13.485373731392844, 'std_lap_time': 0.06772614739222878, 'mean_velocity': 4.37128, 'std_velocity': 0.021953411, 'mean_collision': 0.13333333333333333}
+curriculum_4drones_v12_iter_circle_0_stage_5: {'mean_lap_time': 13.558057637923014, 'std_lap_time': 0.562832258417641, 'mean_velocity': 4.347846, 'std_velocity': 0.18049105, 'mean_collision': 0.1}
+curriculum_4drones_v12_iter_circle_0_stage_4: {'mean_lap_time': 14.92695930790794, 'std_lap_time': 0.1488839951229047, 'mean_velocity': 3.9491196, 'std_velocity': 0.039389182, 'mean_collision': 0.7}
+curriculum_3drones_v12_iter_circle_0_stage_4: {'mean_lap_time': 15.267808511607923, 'std_lap_time': 0.6524279800676248, 'mean_velocity': 3.8609567, 'std_velocity': 0.16498742, 'mean_collision': 0.0}
+curriculum_2drones_v12_iter_circle_0_stage_4: {'mean_lap_time': 15.525846437929873, 'std_lap_time': 0.613433488104474, 'mean_velocity': 3.796788, 'std_velocity': 0.15001288, 'mean_collision': 0.4}
+curriculum_2drones_v12_iter_circle_0_stage_3: {'mean_lap_time': 17.93843042344737, 'std_lap_time': 0.17146759085104055, 'mean_velocity': 3.2861485, 'std_velocity': 0.03141122, 'mean_collision': 0.4}
+curriculum_3drones_v12_iter_circle_0_stage_3: {'mean_lap_time': 18.788310373981524, 'std_lap_time': 0.3869896468786233, 'mean_velocity': 3.1375012, 'std_velocity': 0.06462425, 'mean_collision': 0.26666666666666666}
+curriculum_4drones_v12_iter_circle_0_stage_2: {'mean_lap_time': 21.136656630669698, 'std_lap_time': 0.022542265845907253, 'mean_velocity': 2.7889154, 'std_velocity': 0.002974381, 'mean_collision': 0.4}
+curriculum_2drones_v12_iter_circle_0_stage_2: {'mean_lap_time': 21.307097982788157, 'std_lap_time': 0.04180715140210032, 'mean_velocity': 2.766606, 'std_velocity': 0.005428422, 'mean_collision': 0.0}
+curriculum_4drones_v12_iter_circle_0_stage_3: {'mean_lap_time': 23.88314412073132, 'std_lap_time': 1.8918725977096074, 'mean_velocity': 2.4681988, 'std_velocity': 0.1955152, 'mean_collision': 0.2}
+curriculum_3drones_v12_iter_circle_0_stage_2: {'mean_lap_time': 26.334869027191516, 'std_lap_time': 2.0807943885197653, 'mean_velocity': 2.2384143, 'std_velocity': 0.17686361, 'mean_collision': 0.13333333333333333}
+curriculum_3drones_v12_iter_circle_0_stage_1: {'mean_lap_time': 27.757362180799465, 'std_lap_time': 0.07347079433950426, 'mean_velocity': 2.1237013, 'std_velocity': 0.005621212, 'mean_collision': 0.0}
+curriculum_2drones_v12_iter_circle_0_stage_1: {'mean_lap_time': 29.749583726865385, 'std_lap_time': 0.02328403532671307, 'mean_velocity': 1.9814848, 'std_velocity': 0.0015508439, 'mean_collision': 0.0}
+curriculum_4drones_v12_iter_circle_0_stage_1: {'mean_lap_time': 29.941286944517188, 'std_lap_time': 0.6485688225729538, 'mean_velocity': 1.968798, 'std_velocity': 0.042646833, 'mean_collision': 0.0}

@@ -1,0 +1,6 @@
+nocurriculum_3drones_v3_infinity_iter_0_stage_4: {'mean_lap_time': 26.18461882073317, 'std_lap_time': 0.13936483270279718, 'mean_velocity': 2.169114, 'std_velocity': 0.011544878, 'mean_collision': 0.26666666666666666}
+nocurriculum_2drones_v3_infinity_iter_0_stage_4: {'mean_lap_time': 26.701615486613083, 'std_lap_time': 0.03533654044446177, 'mean_velocity': 2.1271157, 'std_velocity': 0.002814995, 'mean_collision': 0.0}
+nocurriculum_2drones_v3_infinity_iter_0_stage_1: {'mean_lap_time': 29.80459165197293, 'std_lap_time': 0.012297233948379536, 'mean_velocity': 1.9056603, 'std_velocity': 0.00078626646, 'mean_collision': 0.0}
+nocurriculum_2drones_v3_infinity_iter_0_stage_3: {'mean_lap_time': 32.68443770337679, 'std_lap_time': 0.009275837000437544, 'mean_velocity': 1.7377514, 'std_velocity': 0.0004931735, 'mean_collision': 1.0}
+nocurriculum_4drones_v3_infinity_iter_0_stage_4: {'mean_lap_time': 33.3285004287679, 'std_lap_time': 0.7732457834652582, 'mean_velocity': 1.7041699, 'std_velocity': 0.039537996, 'mean_collision': 0.2}
+nocurriculum_2drones_v3_infinity_iter_0_stage_2: {'mean_lap_time': 41.612808516465854, 'std_lap_time': 0.0032620182005074416, 'mean_velocity': 1.3649025, 'std_velocity': 0.00010699438, 'mean_collision': 1.0}

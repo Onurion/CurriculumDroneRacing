@@ -1,0 +1,33 @@
+Training parameters:
+n_agents= 2
+n_gates= 5
+radius= 10.00
+action_coefficient= 6.00
+distance_exp_decay= 2.00
+w_distance= 0.52
+w_distance_change= 1.51
+w_deviation= 0.17
+w_inactivity= 0.20
+w_collision_penalty= 0.20
+reward_type= 1
+observation_type= 1
+is_buffer_obs= False
+buffer_size= 5
+max_steps= 2000
+gate_size= 2.00
+track_type= infinity
+minimum_velocity= 7.00
+enable_collision= True
+terminate_on_collision= True
+collision_penalty= 0.60
+gate_passing_tolerance= 0.20
+overtake_reward= 0.20
+evaluation_mode= True
+env_name= DroneRaceCurriculumMultiEnv_v8_5
+stage= Stage 4 - Advanced II
+algorithm= ppo
+total_timesteps= 10000000.00
+eval_freq= 4000
+eval_episodes= 10
+win_rate_threshold= 0.60
+

@@ -1,0 +1,3 @@
+mean_lap_time: 18.64/±0.10
+mean_velocity: 3.05/±0.02
+mean_collision: 0.00/±0.00

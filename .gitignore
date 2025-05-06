@@ -11,7 +11,3 @@ env/
 venv/
 .idea/
 .DS_Store
-
-# Results folders/files
-[Rr]esults*/
-[Rr]esults.*

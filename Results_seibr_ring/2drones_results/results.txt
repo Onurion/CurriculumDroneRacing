@@ -1,0 +1,3 @@
+mean_targets_reached: 10.50/±3.20
+mean_velocity: 2.27/±0.09
+mean_collision: 0.00/±0.00

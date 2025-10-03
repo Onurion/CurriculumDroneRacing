@@ -78,7 +78,7 @@ You can directly use them for evaluation and benchmarking with the test.py scrip
 
 # Citation
 
-This paper is currently under review IEEE Robotics and Automation Letters
+This paper is currently under review
 
 
 # License

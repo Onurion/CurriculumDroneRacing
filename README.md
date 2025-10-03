@@ -4,7 +4,7 @@
 
 This repository contains the official code for the paper:  
 **CRUISE: Curriculum-Based Iterative Self-Play for Scalable Multi-Drone Racing**  
-*Currently under review at IEEE Robotics and Automation Letters (RA-L)*.
+*Currently under review*.
 
 ---
 

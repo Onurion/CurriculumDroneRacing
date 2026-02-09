@@ -53,3 +53,34 @@ Below is an example visualization of four independently trained agents racing on
 ```sh
 conda create -n cruise python=3.12
 conda activate cruise
+```
+
+### Step 2: Install dependencies
+```sh
+pip install -r requirements.txt
+```
+
+## Usage
+### Training
+To train CRUISE using the structured curriculum and self-play mechanism:
+```sh
+python curriculum_train.py
+```
+
+### Evaluation
+To evaluate pretrained models and reproduce results reported in the paper:
+```sh
+python test.py
+```
+
+### Pretrained Models
+Pretrained policies corresponding to the experiments reported in the paper are included in this repository.
+These models can be directly evaluated using `test.py` for benchmarking and analysis.
+
+## Citation
+The associated paper is currently under review.
+If you use this code, please cite the paper once it becomes publicly available.
+A BibTeX entry will be added to this repository upon publication.
+
+## License
+This repository is released under the MIT License.
